@@ -14,13 +14,13 @@ pub use button::{
     external_link, external_link_button, hint_tooltip, icon_action, icon_action_disabled,
     icon_action_spinning_with_tip, icon_action_with_tip, segmented_icon, ButtonKind, IconKind,
 };
-pub use icons::{png_data_uri, svg_icon};
+pub use icons::{bento_brand_mark, brand_mark_svg, png_data_uri, svg_icon};
 pub use input::{checkbox, radio_option, search_input, text_field, textarea, toggle_switch};
 pub use nav::{filter_chip, sidebar_nav_item};
 pub use progress::progress_bar;
 pub use surface::{
-    card, divider, empty_state, modal_dialog, notice_toast, progress_modal_dialog, section_header,
-    status_badge, toolbar_separator,
+    card, confirm_dialog, divider, empty_state, meta_row, modal_dialog, notice_toast,
+    progress_modal_dialog, section_header, status_badge, toolbar_separator,
 };
 
 use nsh_base::theme;
@@ -42,6 +42,14 @@ pub fn color(name: &'static str) -> AdaptiveColor {
 /// The single shared corner radius for controls and surfaces (`theme().radius`).
 pub fn radius() -> Length {
     theme().radius.into()
+}
+
+/// Monospace font family from the active theme, with a safe platform fallback.
+pub fn mono_font() -> SharedString {
+    theme()
+        .font_mono
+        .clone()
+        .unwrap_or_else(|| "monospace".into())
 }
 
 /// Semantic tone for status values, badges, notices, and progress bars.

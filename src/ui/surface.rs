@@ -3,7 +3,7 @@
 use nsh_base::{dialog, theme};
 use nsh_core::prelude::*;
 
-use super::button::{icon_action, IconKind};
+use super::button::{action, icon_action, ButtonKind, IconKind};
 use super::{color, icons, radius, ValueTone};
 
 /// A grouped flat card surface with a hairline border and zero base shadow.
@@ -166,4 +166,82 @@ pub fn progress_modal_dialog(max_width: f32, content: impl IntoElement) -> impl 
         .justify_center()
         .bg(move || color("scrim"))
         .child(card_view)
+}
+
+/// A two-column metadata row with a fixed muted label on the left and a value element on the right.
+pub fn meta_row(label: &'static str, value: impl IntoElement) -> impl IntoElement {
+    view()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(
+            text(label)
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(move || theme().muted_foreground),
+        )
+        .child(value)
+}
+
+/// Standard confirmation modal dialog with optional warning icon, description, custom content slot,
+/// and Cancel / Confirm buttons.
+#[allow(clippy::too_many_arguments)]
+pub fn confirm_dialog(
+    max_width: f32,
+    danger_icon: bool,
+    title: impl IntoReactive<SharedString>,
+    description: impl IntoReactive<SharedString>,
+    extra: Option<AnyElement>,
+    cancel_label: &'static str,
+    confirm_label: &'static str,
+    confirm_kind: ButtonKind,
+    on_cancel: impl Fn() + Clone + 'static,
+    on_confirm: impl Fn() + 'static,
+) -> impl IntoElement {
+    let title_view = text(title)
+        .text_base()
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(move || theme().foreground);
+
+    let header = if danger_icon {
+        view()
+            .flex_row()
+            .items_center()
+            .gap_2p5()
+            .child(icons::svg_icon(icons::ALERT_TRIANGLE, 18.0, move || {
+                theme().destructive
+            }))
+            .child(title_view)
+            .into_element()
+    } else {
+        title_view.into_element()
+    };
+
+    let body = view()
+        .gap_4()
+        .child(header)
+        .child(
+            text(description)
+                .text_xs()
+                .text_color(move || theme().muted_foreground),
+        );
+    let body = if let Some(extra_el) = extra {
+        body.child(extra_el)
+    } else {
+        body
+    };
+
+    modal_dialog(
+        max_width,
+        on_cancel.clone(),
+        body.child(
+            view()
+                .flex_row()
+                .justify_end()
+                .gap_2()
+                .child(action(ButtonKind::Secondary, cancel_label, on_cancel))
+                .child(action(confirm_kind, confirm_label, on_confirm)),
+        ),
+    )
 }

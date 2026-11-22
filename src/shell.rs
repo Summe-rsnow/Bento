@@ -1,17 +1,19 @@
 //! Desktop shell infrastructure: hidden title bar window setup, appearance
 //! switching, close-to-tray handling, system tray helpers, and global notice toasts.
 
+use std::path::Path;
+use std::process::Command;
 use std::time::Duration;
 
-use nsh_base::theme;
+use nsh_base::{button as base_button, theme};
 use nsh_core::desktop::{TitleBarOptions, TitleBarStyle, WindowAttributes};
 use nsh_core::element::desktop::{current_window, quit, title_bar, MenuItem, WindowRef};
 use nsh_core::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::ui::{
-    action, checkbox, icons, modal_dialog, notice_toast, radio_option, radius, segmented_icon,
-    ButtonKind, ValueTone,
+    action, checkbox, focus_ring, icon_action_with_tip, icons, modal_dialog, notice_toast,
+    radio_option, radius, segmented_icon, ButtonKind, IconKind, ValueTone, MOTION_FAST_MS,
 };
 
 /// Configures the current desktop window with a hidden native title bar,
@@ -57,6 +59,110 @@ pub fn title_bar_shell(
         )
 }
 
+/// Builds the non-interactive brand lockup (mark, name, and version pill) for a title bar.
+pub fn title_bar_brand(meta: crate::AppMeta) -> impl IntoElement {
+    view()
+        .flex_shrink_0()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .child((meta.brand_mark)(20.0))
+        .child(
+            text(meta.name)
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(move || theme().foreground),
+        )
+        .child(
+            view()
+                .px(px(6.0))
+                .py(px(2.0))
+                .rounded(px(6.0))
+                .bg(move || theme().muted)
+                .child(
+                    text(format!("v{}", meta.version))
+                        .text_xs()
+                        .tabular_nums()
+                        .text_color(move || theme().muted_foreground),
+                ),
+        )
+}
+
+/// Builds the brand lockup with a clickable version pill that opens the About dialog.
+pub fn title_bar_brand_clickable(
+    meta: crate::AppMeta,
+    on_about: impl Fn() + 'static,
+) -> impl IntoElement {
+    view()
+        .flex_shrink_0()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .child((meta.brand_mark)(22.0))
+        .child(
+            text(meta.name)
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(move || theme().foreground),
+        )
+        .child(
+            view().window_drag(false).child(
+                base_button()
+                    .on_press(on_about)
+                    .accessibility_label(format!("关于 {}", meta.name))
+                    .px_2()
+                    .h(px(22.0))
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(move || theme().muted)
+                    .hover(|s| s.bg(move || theme().accent))
+                    .active(|s| s.scale(0.96))
+                    .transition_transform()
+                    .duration(MOTION_FAST_MS)
+                    .focus_visible(focus_ring)
+                    .child(
+                        text(format!("v{}", meta.version))
+                            .text_xs()
+                            .tabular_nums()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(move || theme().muted_foreground),
+                    ),
+            ),
+        )
+}
+
+/// Builds the title-bar About icon button with a live update tooltip and unread badge dot.
+pub fn about_icon_button(
+    meta: crate::AppMeta,
+    available_version: impl Fn() -> Option<String> + Copy + 'static,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    view()
+        .relative()
+        .child(icon_action_with_tip(
+            IconKind::Secondary,
+            icons::INFO,
+            "关于",
+            move || match available_version() {
+                Some(version) => format!("关于与更新（发现新版本 v{version}）"),
+                None => format!("关于 {} v{}", meta.name, meta.version),
+            },
+            || false,
+            on_press,
+        ))
+        .child(when(move || available_version().is_some(), || {
+            view()
+                .absolute()
+                .top(px(-2.0))
+                .right(px(-2.0))
+                .w(px(8.0))
+                .h(px(8.0))
+                .rounded_full()
+                .bg(move || theme().primary)
+        }))
+}
+
 /// User-selected color scheme (`system`, `light`, or `dark`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -68,6 +174,24 @@ pub enum ThemeMode {
 }
 
 impl ThemeMode {
+    /// Parses a persisted string key (`"light"`, `"dark"`, or `"system"`) into [`ThemeMode`].
+    pub fn from_key(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "light" => Self::Light,
+            "dark" => Self::Dark,
+            _ => Self::System,
+        }
+    }
+
+    /// Stable lowercase key used when persisting [`ThemeMode`] in preferences.
+    pub fn as_key(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+
     /// Converts this preference to NSH's [`Appearance`].
     pub fn to_appearance(self) -> Appearance {
         match self {
@@ -140,6 +264,24 @@ pub enum CloseBehavior {
 }
 
 impl CloseBehavior {
+    /// Parses a persisted string key (`"tray"`, `"exit"`/`"quit"`, or `"ask"`) into [`CloseBehavior`].
+    pub fn from_key(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "tray" => Self::Tray,
+            "exit" | "quit" => Self::Exit,
+            _ => Self::Ask,
+        }
+    }
+
+    /// Stable lowercase key used when persisting [`CloseBehavior`] in preferences.
+    pub fn as_key(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Tray => "tray",
+            Self::Exit => "exit",
+        }
+    }
+
     /// Human-readable label for tray menus and settings.
     pub fn label(self) -> &'static str {
         match self {
@@ -437,5 +579,73 @@ impl NoticeCenter {
 impl Default for NoticeCenter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn open_with_system_launcher(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let program = "open";
+    #[cfg(target_os = "linux")]
+    let program = "xdg-open";
+    Command::new(program).arg(path).spawn().map(|_| ())
+}
+
+/// Opens a local directory in the system file manager.
+///
+/// Uses OS commands instead of `nsh_core::open_url` (which rejects Windows drive-letter paths in NSH 0.6.1).
+pub fn open_directory(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer").arg(path).spawn().map(|_| ())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        open_with_system_launcher(path)
+    }
+}
+
+/// Opens a local file (e.g. `manifest.json`) in the default editor/viewer.
+pub fn open_local_file(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        Command::new("cmd")
+            .args(["/c", "start", "", &path.to_string_lossy()])
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .map(|_| ())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        open_with_system_launcher(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_mode_key_round_trips() {
+        for mode in [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark] {
+            assert_eq!(ThemeMode::from_key(mode.as_key()), mode);
+        }
+        assert_eq!(ThemeMode::from_key(" Light "), ThemeMode::Light);
+        assert_eq!(ThemeMode::from_key("DARK"), ThemeMode::Dark);
+        assert_eq!(ThemeMode::from_key("unknown"), ThemeMode::System);
+        assert_eq!(ThemeMode::from_key(""), ThemeMode::System);
+    }
+
+    #[test]
+    fn close_behavior_key_round_trips() {
+        for behavior in [CloseBehavior::Ask, CloseBehavior::Tray, CloseBehavior::Exit] {
+            assert_eq!(CloseBehavior::from_key(behavior.as_key()), behavior);
+        }
+        assert_eq!(CloseBehavior::from_key("quit"), CloseBehavior::Exit);
+        assert_eq!(CloseBehavior::from_key(" TRAY "), CloseBehavior::Tray);
+        assert_eq!(CloseBehavior::from_key("QUIT"), CloseBehavior::Exit);
+        assert_eq!(CloseBehavior::from_key("unexpected"), CloseBehavior::Ask);
+        assert_eq!(CloseBehavior::from_key(""), CloseBehavior::Ask);
     }
 }

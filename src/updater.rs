@@ -7,8 +7,8 @@ use nsh_core::prelude::*;
 use serde_json::Value;
 
 use crate::ui::{
-    action, action_disabled, external_link, external_link_button, modal_dialog, radius, ButtonKind,
-    ValueTone,
+    action, action_disabled, external_link, external_link_button, meta_row, modal_dialog, radius,
+    ButtonKind, ValueTone,
 };
 
 /// Static identity metadata for an application built on Bento.
@@ -455,7 +455,7 @@ pub fn about_dialog(
                     .border_1()
                     .border_color(move || theme().border)
                     .bg(move || theme().muted)
-                    .child(info_row(
+                    .child(meta_row(
                         "当前版本",
                         text(format!("v{}", meta.version))
                             .text_xs()
@@ -463,13 +463,13 @@ pub fn about_dialog(
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(move || theme().foreground),
                     ))
-                    .child(info_row(
+                    .child(meta_row(
                         "开源协议",
                         text(meta.license)
                             .text_xs()
                             .text_color(move || theme().foreground),
                     ))
-                    .child(info_row(
+                    .child(meta_row(
                         "项目仓库",
                         external_link(meta.github_repo, Some(repo_url)),
                     )),
@@ -547,20 +547,6 @@ pub fn about_dialog(
                     .child(action(ButtonKind::Ghost, "关闭", close_btn)),
             ),
     )
-}
-
-fn info_row(label: &'static str, value: impl IntoElement) -> impl IntoElement {
-    view()
-        .flex_row()
-        .items_center()
-        .justify_between()
-        .gap_3()
-        .child(
-            text(label)
-                .text_xs()
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(value)
 }
 
 #[cfg(test)]
