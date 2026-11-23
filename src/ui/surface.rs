@@ -68,8 +68,10 @@ pub fn empty_state(
 /// A short semantic status pill: state is always named in words, never color alone.
 pub fn status_badge(
     label: impl IntoReactive<SharedString>,
-    tone: ValueTone,
+    tone: impl IntoReactive<ValueTone>,
 ) -> impl IntoElement {
+    let tone_bg = tone.into_reactive();
+    let tone_fg = tone_bg.clone();
     view()
         .flex_shrink_0()
         .px_2()
@@ -77,8 +79,12 @@ pub fn status_badge(
         .items_center()
         .justify_center()
         .rounded_full()
-        .bg(move || tone.color().opacity(0.16))
-        .child(text(label).text_xs().text_color(move || tone.color()))
+        .bg(move || tone_bg.get().color().opacity(0.16))
+        .child(
+            text(label)
+                .text_xs()
+                .text_color(move || tone_fg.get().color()),
+        )
 }
 
 /// A floating bottom feedback toast that occupies zero layout space in the main column.

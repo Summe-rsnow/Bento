@@ -1,20 +1,200 @@
 //! Desktop shell infrastructure: hidden title bar window setup, appearance
 //! switching, close-to-tray handling, system tray helpers, and global notice toasts.
 
+use std::cell::RefCell;
 use std::path::Path;
 use std::process::Command;
+use std::rc::Rc;
 use std::time::Duration;
 
 use nsh_base::{button as base_button, theme};
-use nsh_core::desktop::{TitleBarOptions, TitleBarStyle, WindowAttributes};
-use nsh_core::element::desktop::{current_window, quit, title_bar, MenuItem, WindowRef};
+use nsh_core::desktop::{TitleBarOptions, TitleBarStyle, WindowAttributes, WindowPlacement};
+use nsh_core::element::desktop::{current_window, on_app_quit, quit, title_bar, MenuItem, WindowRef};
 use nsh_core::prelude::*;
+use nsh_core::storage::Storage;
 use serde::{Deserialize, Serialize};
 
 use crate::ui::{
     action, checkbox, focus_ring, icon_action_with_tip, icons, modal_dialog, notice_toast,
-    radio_option, radius, segmented_icon, ButtonKind, IconKind, ValueTone, MOTION_FAST_MS,
+    radio_option, radius, segmented_icon, toolbar_separator, ButtonKind, IconKind, ValueTone,
+    MOTION_FAST_MS,
 };
+
+/// Default `Storage` key used by [`remember_window_placement`].
+pub const DEFAULT_WINDOW_PLACEMENT_KEY: &str = "bento.window.placement.v1";
+
+#[derive(Clone, Default)]
+struct WindowPlacementRegistry {
+    next_id: u64,
+    entries: Vec<(String, u64, Rc<dyn Fn()>)>,
+}
+
+/// Checks whether `placement` has finite coordinates, positive size, and meets `min_width`/`min_height`.
+pub fn is_valid_window_placement(
+    placement: &WindowPlacement,
+    min_width: f32,
+    min_height: f32,
+) -> bool {
+    let b = placement.bounds;
+    b.origin.x.0.is_finite()
+        && b.origin.y.0.is_finite()
+        && b.size.width.0.is_finite()
+        && b.size.height.0.is_finite()
+        && b.size.width.0 > 0.0
+        && b.size.height.0 > 0.0
+        && b.size.width.0 >= min_width
+        && b.size.height.0 >= min_height
+}
+
+/// Immediately persists `window`'s current placement under `storage_key` when it is visible,
+/// not minimized, and satisfies [`is_valid_window_placement`].
+pub fn save_window_placement(
+    window: &WindowRef,
+    storage_key: &str,
+    min_width: f32,
+    min_height: f32,
+) {
+    let Some(st) = window.state() else {
+        return;
+    };
+    if st.minimized
+        || !st.visible
+        || !is_valid_window_placement(&st.placement, min_width, min_height)
+    {
+        return;
+    }
+    if let Ok(json) = serde_json::to_string(&st.placement) {
+        let _ = Storage::set_item(storage_key, json);
+    }
+}
+
+/// Restores and remembers `window`'s size and position under [`DEFAULT_WINDOW_PLACEMENT_KEY`].
+pub fn remember_window_placement(window: WindowRef, min_width: f32, min_height: f32) {
+    remember_window_placement_with_key(window, DEFAULT_WINDOW_PLACEMENT_KEY, min_width, min_height);
+}
+
+/// Restores `window`'s placement from `storage_key` (if valid), debounces changes by 250ms,
+/// and flushes the latest valid placement before hiding to tray or quitting.
+pub fn remember_window_placement_with_key(
+    window: WindowRef,
+    storage_key: &str,
+    min_width: f32,
+    min_height: f32,
+) {
+    let key: Rc<str> = Rc::from(storage_key);
+    let restored = Storage::get_item(&key)
+        .and_then(|raw| serde_json::from_str::<WindowPlacement>(&raw).ok())
+        .filter(|p| is_valid_window_placement(p, min_width, min_height));
+
+    if let Some(saved) = restored {
+        window.set_placement(saved);
+    }
+
+    let latest_valid: Rc<RefCell<Option<WindowPlacement>>> = Rc::new(RefCell::new(restored));
+    let last_saved: Rc<RefCell<Option<WindowPlacement>>> = Rc::new(RefCell::new(restored));
+
+    let persist_if_changed = {
+        let key = Rc::clone(&key);
+        let last_saved = Rc::clone(&last_saved);
+        move |placement: WindowPlacement| {
+            if *last_saved.borrow() == Some(placement) {
+                return;
+            }
+            if let Ok(json) = serde_json::to_string(&placement)
+                && Storage::set_item(&*key, json).is_ok()
+            {
+                *last_saved.borrow_mut() = Some(placement);
+            }
+        }
+    };
+
+    let flush_now = {
+        let window = window.clone();
+        let latest_valid = Rc::clone(&latest_valid);
+        let persist_if_changed = persist_if_changed.clone();
+        Rc::new(move || {
+            let live = untracked(|| window.state()).and_then(|st| {
+                (!st.minimized
+                    && st.visible
+                    && is_valid_window_placement(&st.placement, min_width, min_height))
+                .then_some(st.placement)
+            });
+            if let Some(placement) = live {
+                *latest_valid.borrow_mut() = Some(placement);
+                persist_if_changed(placement);
+            } else if let Some(cached) = *latest_valid.borrow() {
+                persist_if_changed(cached);
+            }
+        })
+    };
+
+    let reg = global::<WindowPlacementRegistry>();
+    let win_id = window.id().to_owned();
+    let mut reg_id = 0_u64;
+    {
+        let flush_for_reg = Rc::clone(&flush_now);
+        let win_id_insert = win_id.clone();
+        reg.update(|r| {
+            r.next_id = r.next_id.wrapping_add(1);
+            reg_id = r.next_id;
+            r.entries.retain(|(id, _, _)| id != &win_id_insert);
+            r.entries.push((win_id_insert, reg_id, flush_for_reg));
+        });
+    }
+    cleanup(move || {
+        if let Some(reg) = try_global::<WindowPlacementRegistry>() {
+            reg.update(|r| r.entries.retain(|(_, id, _)| *id != reg_id));
+        }
+    });
+
+    {
+        let window = window.clone();
+        let latest_valid = Rc::clone(&latest_valid);
+        let last_saved = Rc::clone(&last_saved);
+        effect(move || {
+            let Some(st) = window.state() else {
+                return;
+            };
+            if st.minimized
+                || !st.visible
+                || !is_valid_window_placement(&st.placement, min_width, min_height)
+            {
+                return;
+            }
+            let placement = st.placement;
+            *latest_valid.borrow_mut() = Some(placement);
+            if *last_saved.borrow() == Some(placement) {
+                return;
+            }
+            let persist = persist_if_changed.clone();
+            let task = set_timeout(Duration::from_millis(250), move || {
+                persist(placement);
+            });
+            cleanup(move || task.cancel());
+        });
+    }
+
+    on_app_quit(move || {
+        flush_now();
+        std::future::ready(())
+    });
+}
+
+pub(crate) fn flush_registered_window_placement(window: &WindowRef) {
+    let Some(reg) = try_global::<WindowPlacementRegistry>() else {
+        return;
+    };
+    let flusher = reg.with_untracked(|r| {
+        r.entries
+            .iter()
+            .rev()
+            .find(|(id, _, _)| id == window.id())
+            .map(|(_, _, f)| Rc::clone(f))
+    });
+    if let Some(flush) = flusher {
+        flush();
+    }
+}
 
 /// Configures the current desktop window with a hidden native title bar,
 /// minimum size bounds, and intercepted close button (`close_on_press = false`).
@@ -250,6 +430,24 @@ pub fn theme_mode_segmented(
         ))
 }
 
+/// Renders `[actions] | [theme_mode_segmented]` in a horizontal row (`gap(px(6.0))`),
+/// guaranteeing the theme switcher always stays on the far right of the title bar.
+pub fn title_bar_right_with_theme(
+    actions: impl IntoElement,
+    current_theme: impl Fn() -> ThemeMode + Copy + 'static,
+    on_theme_change: impl Fn(ThemeMode) + Copy + 'static,
+) -> impl IntoElement {
+    view()
+        .window_drag(false)
+        .flex_shrink_0()
+        .flex_row()
+        .items_center()
+        .gap(px(6.0))
+        .child(actions)
+        .child(toolbar_separator())
+        .child(theme_mode_segmented(current_theme, on_theme_change))
+}
+
 /// Action taken when the user clicks the main window's close button.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -304,8 +502,14 @@ pub fn bind_close_handler(
             win.focus();
             on_ask();
         }
-        CloseBehavior::Tray => win.hide(),
-        CloseBehavior::Exit => quit(),
+        CloseBehavior::Tray => {
+            flush_registered_window_placement(&win);
+            win.hide();
+        }
+        CloseBehavior::Exit => {
+            flush_registered_window_placement(&win);
+            quit();
+        }
     });
 }
 
@@ -352,6 +556,7 @@ pub fn confirm_close_dialog(
                 CloseBehavior::Exit
             });
         }
+        flush_registered_window_placement(&window);
         if to_tray {
             window.hide();
         } else {
@@ -622,9 +827,92 @@ pub fn open_local_file(path: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Reveals and selects `path` in the system file manager (falling back to opening its
+/// containing directory when `path` is a root or cannot be selected directly).
+pub fn reveal_in_file_manager(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        if path.as_os_str().is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "cannot reveal an empty path",
+            ));
+        }
+        if let Some(raw_arg) = windows_select_raw_arg(path) {
+            Command::new("explorer")
+                .raw_arg(raw_arg)
+                .spawn()
+                .map(|_| ())
+        } else if let Some(dir) = windows_fallback_dir(path) {
+            Command::new("explorer").arg(dir).spawn().map(|_| ())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("path does not exist: {}", path.display()),
+            ))
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg("-R").arg(path).spawn().map(|_| ())
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        let dir = linux_reveal_dir(path);
+        Command::new("xdg-open").arg(dir).spawn().map(|_| ())
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_select_raw_arg(path: &Path) -> Option<String> {
+    if path.as_os_str().is_empty() || path.file_name().is_none() {
+        return None;
+    }
+    let raw = path.to_string_lossy();
+    if raw.contains('"') || !path.exists() {
+        return None;
+    }
+    let normalized = raw.replace('/', "\\");
+    Some(format!("/select,\"{normalized}\""))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_fallback_dir(path: &Path) -> Option<&Path> {
+    if path.file_name().is_none() && !path.as_os_str().is_empty() {
+        return Some(path);
+    }
+    let mut cur = path.parent();
+    while let Some(dir) = cur {
+        if !dir.as_os_str().is_empty() && dir.is_dir() {
+            return Some(dir);
+        }
+        cur = dir.parent();
+    }
+    None
+}
+
+#[cfg(any(all(not(target_os = "windows"), not(target_os = "macos")), test))]
+fn linux_reveal_dir(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if parent.as_os_str().is_empty() => Path::new("."),
+        Some(parent) => parent,
+        None => path,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nsh_core::desktop::WindowMode;
+
+    fn make_placement(x: f32, y: f32, w: f32, h: f32) -> WindowPlacement {
+        WindowPlacement::new(
+            WindowMode::Normal,
+            Bounds::new(point(px(x), px(y)), size(px(w), px(h))),
+        )
+    }
 
     #[test]
     fn theme_mode_key_round_trips() {
@@ -647,5 +935,101 @@ mod tests {
         assert_eq!(CloseBehavior::from_key("QUIT"), CloseBehavior::Exit);
         assert_eq!(CloseBehavior::from_key("unexpected"), CloseBehavior::Ask);
         assert_eq!(CloseBehavior::from_key(""), CloseBehavior::Ask);
+    }
+
+    #[test]
+    fn validates_window_placement_bounds_and_minimums() {
+        assert!(is_valid_window_placement(
+            &make_placement(100.0, 80.0, 960.0, 640.0),
+            820.0,
+            540.0
+        ));
+        // Negative origin coordinates (secondary monitor left/above primary) are valid if finite.
+        assert!(is_valid_window_placement(
+            &make_placement(-1200.0, -40.0, 820.0, 540.0),
+            820.0,
+            540.0
+        ));
+        // Below minimum width or height.
+        assert!(!is_valid_window_placement(
+            &make_placement(0.0, 0.0, 819.0, 540.0),
+            820.0,
+            540.0
+        ));
+        assert!(!is_valid_window_placement(
+            &make_placement(0.0, 0.0, 820.0, 539.0),
+            820.0,
+            540.0
+        ));
+        // Zero / negative dimensions.
+        assert!(!is_valid_window_placement(
+            &make_placement(0.0, 0.0, 0.0, 0.0),
+            0.0,
+            0.0
+        ));
+        assert!(!is_valid_window_placement(
+            &make_placement(0.0, 0.0, -100.0, 600.0),
+            0.0,
+            0.0
+        ));
+        // Non-finite values.
+        assert!(!is_valid_window_placement(
+            &make_placement(f32::NAN, 0.0, 900.0, 600.0),
+            820.0,
+            540.0
+        ));
+        assert!(!is_valid_window_placement(
+            &make_placement(0.0, f32::INFINITY, 900.0, 600.0),
+            820.0,
+            540.0
+        ));
+        assert!(!is_valid_window_placement(
+            &make_placement(0.0, 0.0, f32::INFINITY, 600.0),
+            820.0,
+            540.0
+        ));
+        assert!(!is_valid_window_placement(
+            &make_placement(0.0, 0.0, 900.0, f32::NAN),
+            820.0,
+            540.0
+        ));
+    }
+
+    #[test]
+    fn windows_reveal_formats_select_arg_and_handles_roots() {
+        let dir = std::env::temp_dir();
+        let file = dir.join("bento_reveal_probe.txt");
+        std::fs::write(&file, b"ok").expect("create temp probe file");
+        let raw = windows_select_raw_arg(&file).expect("raw /select arg");
+        assert!(raw.starts_with("/select,\""));
+        assert!(raw.ends_with('"'));
+        assert!(!raw["/select,".len()..].contains('/'));
+        let _ = std::fs::remove_file(&file);
+
+        // Existing path with forward slashes gets normalized to backslashes.
+        let forward_path_str = file.to_string_lossy().replace('\\', "/");
+        std::fs::write(&file, b"ok").expect("recreate temp probe file");
+        let raw_forward =
+            windows_select_raw_arg(Path::new(&forward_path_str)).expect("normalized /select arg");
+        assert!(raw_forward.starts_with("/select,\""));
+        assert!(!raw_forward["/select,".len()..].contains('/'));
+        let _ = std::fs::remove_file(&file);
+
+        // Missing file inside an existing parent directory falls back to the parent directory.
+        let missing = dir.join("bento_missing_probe_99999.txt");
+        assert_eq!(windows_select_raw_arg(&missing), None);
+        assert_eq!(windows_fallback_dir(&missing), Some(dir.as_path()));
+
+        assert_eq!(windows_select_raw_arg(Path::new("")), None);
+        assert_eq!(windows_select_raw_arg(Path::new("C:\\")), None);
+        assert_eq!(
+            windows_fallback_dir(Path::new("C:\\")),
+            Some(Path::new("C:\\"))
+        );
+        assert_eq!(linux_reveal_dir(Path::new("file.txt")), Path::new("."));
+        assert_eq!(
+            linux_reveal_dir(Path::new("/tmp/test/file.txt")),
+            Path::new("/tmp/test")
+        );
     }
 }

@@ -1,7 +1,9 @@
 //! Bento: shared Native Shell (NSH) UI component library and desktop shell
-//! infrastructure for Wonton, Sundae, and companion desktop tools.
+//! infrastructure for Wonton, Sundae, Ramen, and companion desktop tools.
 
 pub mod drag_list;
+pub mod format;
+pub mod hotkey;
 pub mod shell;
 pub mod ui;
 pub mod updater;

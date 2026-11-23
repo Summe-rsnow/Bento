@@ -3,6 +3,7 @@
 //! Apps compose these controls rather than styling `nsh_base` primitives directly.
 
 pub mod button;
+pub mod hotkey;
 pub mod icons;
 pub mod input;
 pub mod nav;
@@ -14,6 +15,7 @@ pub use button::{
     external_link, external_link_button, hint_tooltip, icon_action, icon_action_disabled,
     icon_action_spinning_with_tip, icon_action_with_tip, segmented_icon, ButtonKind, IconKind,
 };
+pub use hotkey::{hotkey_badge, hotkey_editor, hotkey_editor_with_presets, DEFAULT_HOTKEY_PRESETS};
 pub use icons::{bento_brand_mark, brand_mark_svg, png_data_uri, svg_icon};
 pub use input::{checkbox, radio_option, search_input, text_field, textarea, toggle_switch};
 pub use nav::{filter_chip, sidebar_nav_item};
@@ -85,6 +87,8 @@ impl ValueTone {
         }
     }
 }
+
+nsh_core::static_reactive!(ValueTone: ValueTone);
 
 /// Standard outward focus ring shown on keyboard focus (`focus_visible`).
 pub fn focus_ring(s: StyleRefinement) -> StyleRefinement {
