@@ -10,7 +10,7 @@
 基于 **Rust + [NSH](https://github.com/longbridge/nsh)** 构建，纯原生渲染，无 JavaScript 运行时开销。
 
 <p>
-  <a href="https://github.com/Summe-rsnow/Bento/releases"><img src="https://img.shields.io/badge/Version-v1.0.1-10b981?style=flat-square" alt="Version v1.0.1" /></a>
+  <a href="https://github.com/Summe-rsnow/Bento/releases"><img src="https://img.shields.io/badge/Version-v1.1.0-10b981?style=flat-square" alt="Version v1.1.0" /></a>
   <img src="https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust" alt="Rust 2024" />
   <img src="https://img.shields.io/badge/Platform-Windows-0ea5e9?style=flat-square" alt="Platform Windows" />
   <img src="https://img.shields.io/badge/UI-NSH%20Native-6366f1?style=flat-square" alt="UI NSH Native" />
@@ -34,7 +34,7 @@
 
 | 工具 | 当前版本 | 仓库地址 | 定位与职责 |
 |---|---|---|---|
-| **Bento** | `v1.0.1` | [Summe-rsnow/Bento](https://github.com/Summe-rsnow/Bento) | 共享原生 UI 组件库、统一 24×24 图标库与桌面壳基础设施 |
+| **Bento** | `v1.1.0` | [Summe-rsnow/Bento](https://github.com/Summe-rsnow/Bento) | 共享原生 UI 组件库、统一 24×24 图标库与桌面壳基础设施 |
 | **Wonton** | `v1.2.2` | [Summe-rsnow/Wonton](https://github.com/Summe-rsnow/Wonton) | 专为 Antigravity 打造的进程级独立代理与多账号额度管理工具 |
 | **Sundae** | `v1.0.1` | [Summe-rsnow/Sundae](https://github.com/Summe-rsnow/Sundae) | 专为 Windows Scoop 打造的轻快原生桌面软件包管理器 |
 | **Ramen** | `v1.0.0` | [Summe-rsnow/Ramen](https://github.com/Summe-rsnow/Ramen) | 专为 Windows 打造的极速桌面文件搜索与即时索引检索工具 |
@@ -57,6 +57,10 @@
   - **窗口尺寸与位置记忆**：`remember_window_placement` / `remember_window_placement_with_key`（配合 `DEFAULT_WINDOW_PLACEMENT_KEY`、`save_window_placement`、`is_valid_window_placement`）在启动时恢复合法窗口位置与大小，使用 250ms 防抖自动持久化，并在最小化到托盘或 `on_app_quit` 退出时同步落盘。
   - **外观与关闭行为**：`theme_mode_segmented` 配合 `ThemeMode`（`from_key` / `as_key` / `apply` / `label`）实现「跟随系统 / 浅色 / 深色」三段切换；`bind_close_handler`、`close_behavior_submenu`、`confirm_close_dialog` 配合 `CloseBehavior`（`Ask` / `Tray` / `Exit`）统一处理关闭最小化到托盘或直接退出。
   - **悬浮反馈与本地打开**：`NoticeCenter`（配合 `NoticeTone`，普通提示 3 秒自动消失、错误提示 6 秒）提供不占布局空间的底部悬浮通知；`open_directory`、`open_local_file` 与 `reveal_in_file_manager` 跨平台调用系统文件管理器定位高亮文件或打开本地目录/文件（绕过 NSH 0.6.1 `open_url` 对 Windows 盘符路径的限制）。
+
+- **🚀 `autostart` — 跨平台开机自启管理**
+  - 提供零额外依赖的 `is_autostart_enabled`、`enable_autostart`、`disable_autostart`、`set_autostart_enabled` 与可配置启动参数/可执行路径的 `AutoStartConfig`：Windows 直接调用 Win32 UTF-16 `advapi32` 注册表 API 读写 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`（自动去除 `\\?\` 前缀并正确转义含空格路径与参数），macOS 写入 `~/Library/LaunchAgents/*.plist`，Linux 写入 `$XDG_CONFIG_HOME/autostart/*.desktop`。
+  - 配合 `shell::autostart_menu_item` 与 `ui::toggle_switch`，下游应用可在系统托盘菜单或设置面板中一行接入开机自启开关。
 
 - **⌨️ `hotkey` — 全局快捷键绑定与窗口呼出**
   - 提供 `HotkeyBinding`（序列化配置、语法校验 `validate()` 与平台显示文本 `display_label()`）、`HotkeyStatus`（`Disabled` / `Registering` / `Registered` / `Conflict` / `Invalid`，含 `label()` 与 `tone()`）、`bind_global_hotkey`（先校验后注册、旧热键自动注销、单调代次防止异步竞态覆盖）以及 `toggle_window_visibility`。
@@ -109,11 +113,11 @@ pub fn tray_icon_src() -> ImageSrc {
 
 ### 在家族应用中引入 Bento
 
-在应用的 `Cargo.toml` 中通过 Git Tag 引入稳定版本 `v1.0.1`：
+在应用的 `Cargo.toml` 中通过 Git Tag 引入稳定版本 `v1.1.0`：
 
 ```toml
 [dependencies]
-bento = { git = "https://github.com/Summe-rsnow/Bento.git", tag = "v1.0.1" }
+bento = { git = "https://github.com/Summe-rsnow/Bento.git", tag = "v1.1.0" }
 ```
 
 在同级目录同步开发与联调 `Bento` 时，可通过 `[patch]` 临时指向本地工作区：
@@ -141,12 +145,13 @@ cargo test
 ```text
 Bento/
 ├── assets/                 # 品牌 Logo 与向量标志（logo.svg / logo-mark.svg / icon.png）
-├── Cargo.toml              # Crate 元信息与依赖配置（v1.0.1，Rust 2024）
+├── Cargo.toml              # Crate 元信息与依赖配置（v1.1.0，Rust 2024）
 ├── LICENSE                 # Apache License 2.0 开源协议
 ├── README.md               # 项目说明文档
 ├── theme.json              # 家族统一浅色 / 深色语义色 Token（DEFAULT_THEME_JSON）
 └── src/
-    ├── lib.rs              # 库根入口：导出子模块、AppMeta 与 DEFAULT_THEME_JSON
+    ├── lib.rs              # 库根入口：导出子模块、AutoStartConfig、AppMeta 与 DEFAULT_THEME_JSON
+    ├── autostart.rs        # 跨平台开机自启（Windows Run 注册表 / macOS LaunchAgents / Linux XDG .desktop）
     ├── drag_list.rs        # 垂直卡片列表拖拽排序控制器与槽位几何计算
     ├── format.rs           # 文件大小、千分位计数与 Windows FILETIME 格式化
     ├── hotkey.rs           # 全局快捷键校验、异步注册绑定与主窗口显隐切换

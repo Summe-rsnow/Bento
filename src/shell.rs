@@ -534,6 +534,13 @@ pub fn close_behavior_submenu(
     )
 }
 
+/// Builds a checkable system tray menu item for toggling launch-at-login (`开机自启`).
+pub fn autostart_menu_item(enabled: bool, on_toggle: impl Fn(bool) + 'static) -> MenuItem {
+    MenuItem::new("开机自启")
+        .checked(enabled)
+        .on_select(move || on_toggle(!enabled))
+}
+
 /// Modal dialog asking whether clicking close should minimize to tray or quit,
 /// with an optional "不再提示" checkbox that persists the chosen [`CloseBehavior`].
 pub fn confirm_close_dialog(
