@@ -10,7 +10,7 @@
 基于 **Rust + [NSH](https://github.com/longbridge/nsh)** 构建，纯原生渲染，无 JavaScript 运行时开销。
 
 <p>
-  <a href="https://github.com/Summe-rsnow/Bento/releases"><img src="https://img.shields.io/badge/Version-v1.1.0-10b981?style=flat-square" alt="Version v1.1.0" /></a>
+  <a href="https://github.com/Summe-rsnow/Bento/releases"><img src="https://img.shields.io/badge/Version-v1.1.1-10b981?style=flat-square" alt="Version v1.1.1" /></a>
   <img src="https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust" alt="Rust 2024" />
   <img src="https://img.shields.io/badge/Platform-Windows-0ea5e9?style=flat-square" alt="Platform Windows" />
   <img src="https://img.shields.io/badge/UI-NSH%20Native-6366f1?style=flat-square" alt="UI NSH Native" />
@@ -34,10 +34,10 @@
 
 | 工具 | 当前版本 | 仓库地址 | 定位与职责 |
 |---|---|---|---|
-| **Bento** | `v1.1.0` | [Summe-rsnow/Bento](https://github.com/Summe-rsnow/Bento) | 共享原生 UI 组件库、统一 24×24 图标库与桌面壳基础设施 |
-| **Wonton** | `v1.2.2` | [Summe-rsnow/Wonton](https://github.com/Summe-rsnow/Wonton) | 专为 Antigravity 打造的进程级独立代理与多账号额度管理工具 |
-| **Sundae** | `v1.0.1` | [Summe-rsnow/Sundae](https://github.com/Summe-rsnow/Sundae) | 专为 Windows Scoop 打造的轻快原生桌面软件包管理器 |
-| **Ramen** | `v1.0.0` | [Summe-rsnow/Ramen](https://github.com/Summe-rsnow/Ramen) | 专为 Windows 打造的极速桌面文件搜索与即时索引检索工具 |
+| **Bento** | `v1.1.1` | [Summe-rsnow/Bento](https://github.com/Summe-rsnow/Bento) | 共享原生 UI 组件库、统一 24×24 图标库与桌面壳基础设施 |
+| **Wonton** | `v1.3.1` | [Summe-rsnow/Wonton](https://github.com/Summe-rsnow/Wonton) | 专为 Antigravity 打造的进程级独立代理与多账号额度管理工具 |
+| **Sundae** | `v1.1.1` | [Summe-rsnow/Sundae](https://github.com/Summe-rsnow/Sundae) | 专为 Windows Scoop 打造的轻快原生桌面软件包管理器 |
+| **Ramen** | `v1.1.1` | [Summe-rsnow/Ramen](https://github.com/Summe-rsnow/Ramen) | 专为 Windows 打造的极速桌面文件搜索与即时索引检索工具 |
 
 ---
 
@@ -59,8 +59,8 @@
   - **悬浮反馈与本地打开**：`NoticeCenter`（配合 `NoticeTone`，普通提示 3 秒自动消失、错误提示 6 秒）提供不占布局空间的底部悬浮通知；`open_directory`、`open_local_file` 与 `reveal_in_file_manager` 跨平台调用系统文件管理器定位高亮文件或打开本地目录/文件（绕过 NSH 0.6.1 `open_url` 对 Windows 盘符路径的限制）。
 
 - **🚀 `autostart` — 跨平台开机自启管理**
-  - 提供零额外依赖的 `is_autostart_enabled`、`enable_autostart`、`disable_autostart`、`set_autostart_enabled` 与可配置启动参数/可执行路径的 `AutoStartConfig`：Windows 直接调用 Win32 UTF-16 `advapi32` 注册表 API 读写 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`（自动去除 `\\?\` 前缀并正确转义含空格路径与参数），macOS 写入 `~/Library/LaunchAgents/*.plist`，Linux 写入 `$XDG_CONFIG_HOME/autostart/*.desktop`。
-  - 配合 `shell::autostart_menu_item` 与 `ui::toggle_switch`，下游应用可在系统托盘菜单或设置面板中一行接入开机自启开关。
+  - 提供零额外依赖的 `is_autostart_enabled`、`enable_autostart`、`disable_autostart`、`set_autostart_enabled` 与支持 `legacy_names` 迁移及自定义启动参数的 `AutoStartConfig`：Windows 直接调用 Win32 UTF-16 `advapi32` 注册表 API 读写 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`（自动去除 `\\?\` 前缀并正确转义含空格路径与参数），macOS 写入 `~/Library/LaunchAgents/*.plist`，Linux 写入 `$XDG_CONFIG_HOME/autostart/*.desktop`。
+  - 提供全局响应式控制器与统一 UI 辅助函数（`shell::init_autostart`、`shell::init_autostart_for_test`、`shell::autostart_enabled`、`shell::refresh_autostart`、`shell::set_autostart_enabled`、`shell::title_bar_autostart_toggle`、`shell::autostart_tray_item`、`shell::autostart_menu_item`），下游应用可一行完成标题栏开关与托盘菜单联动。
 
 - **⌨️ `hotkey` — 全局快捷键绑定与窗口呼出**
   - 提供 `HotkeyBinding`（序列化配置、语法校验 `validate()` 与平台显示文本 `display_label()`）、`HotkeyStatus`（`Disabled` / `Registering` / `Registered` / `Conflict` / `Invalid`，含 `label()` 与 `tone()`）、`bind_global_hotkey`（先校验后注册、旧热键自动注销、单调代次防止异步竞态覆盖）以及 `toggle_window_visibility`。
@@ -113,11 +113,11 @@ pub fn tray_icon_src() -> ImageSrc {
 
 ### 在家族应用中引入 Bento
 
-在应用的 `Cargo.toml` 中通过 Git Tag 引入稳定版本 `v1.1.0`：
+在应用的 `Cargo.toml` 中通过 Git Tag 引入稳定版本 `v1.1.1`：
 
 ```toml
 [dependencies]
-bento = { git = "https://github.com/Summe-rsnow/Bento.git", tag = "v1.1.0" }
+bento = { git = "https://github.com/Summe-rsnow/Bento.git", tag = "v1.1.1" }
 ```
 
 在同级目录同步开发与联调 `Bento` 时，可通过 `[patch]` 临时指向本地工作区：
@@ -145,7 +145,7 @@ cargo test
 ```text
 Bento/
 ├── assets/                 # 品牌 Logo 与向量标志（logo.svg / logo-mark.svg / icon.png）
-├── Cargo.toml              # Crate 元信息与依赖配置（v1.1.0，Rust 2024）
+├── Cargo.toml              # Crate 元信息与依赖配置（v1.1.1，Rust 2024）
 ├── LICENSE                 # Apache License 2.0 开源协议
 ├── README.md               # 项目说明文档
 ├── theme.json              # 家族统一浅色 / 深色语义色 Token（DEFAULT_THEME_JSON）

@@ -8,8 +8,10 @@ use bento::hotkey::{
     bind_global_hotkey, toggle_window_visibility, HotkeyBinding, HotkeyStatus,
 };
 use bento::shell::{
-    bind_close_handler, remember_window_placement_with_key, save_window_placement,
-    title_bar_right_with_theme, title_bar_shell, CloseBehavior, ThemeMode,
+    autostart_enabled, autostart_tray_item, bind_close_handler, init_autostart_for_test,
+    refresh_autostart, remember_window_placement_with_key, save_window_placement,
+    set_autostart_enabled, title_bar_autostart_toggle, title_bar_right_with_theme,
+    title_bar_shell, CloseBehavior, NoticeCenter, NoticeTone, ThemeMode,
 };
 use bento::ui::{hotkey_badge, hotkey_editor};
 use bento::DEFAULT_THEME_JSON;
@@ -680,4 +682,71 @@ fn ui_controls_render_title_bar_hotkey_badge_and_editor_across_statuses() {
     assert!(invalid_texts
         .iter()
         .any(|t| t == "invalid keystroke syntax"));
+}
+
+#[test]
+fn autostart_controller_test_mode_toggles_state_and_emits_notices_without_os_mutation() {
+    thread_local! {
+        static STATE_LOG: RefCell<Vec<(bool, Option<(String, NoticeTone)>)>> = const { RefCell::new(Vec::new()) };
+    }
+    STATE_LOG.with(|log| log.borrow_mut().clear());
+
+    let storage = Arc::new(MemoryBackend::default());
+    let mut core = setup_core(storage, desktop_env(None));
+
+    #[component]
+    fn AutoStartApp() -> impl IntoElement {
+        init_autostart_for_test(false);
+        // `refresh_autostart` must be a no-op in test mode.
+        refresh_autostart();
+        let _tray_item = autostart_tray_item();
+
+        let toggle_driver = view().test_id("autostart-driver").on_press(move || {
+            let next = !autostart_enabled();
+            set_autostart_enabled(next);
+            refresh_autostart();
+            let notice = NoticeCenter::global()
+                .current()
+                .map(|n| (n.text, n.tone));
+            STATE_LOG.with(|log| log.borrow_mut().push((autostart_enabled(), notice)));
+        });
+
+        view()
+            .flex_1()
+            .flex_col()
+            .child(title_bar_shell(
+                42.0,
+                text("AutoStartApp"),
+                view(),
+                title_bar_autostart_toggle(),
+            ))
+            .child(toggle_driver)
+    }
+
+    core.mount_root(&Root::of::<AutoStartApp>());
+    let batch = core.commit().unwrap();
+    let texts = texts_of(&batch);
+    assert!(
+        texts.iter().any(|t| t == "开机自启"),
+        "expected title_bar_autostart_toggle to render `开机自启`, got {texts:?}"
+    );
+    let driver_id = find_test_id(&batch, "autostart-driver");
+
+    // Toggle false -> true
+    let _ = press_node(&mut core, driver_id);
+    // Toggle true -> false
+    let _ = press_node(&mut core, driver_id);
+
+    STATE_LOG.with(|log| {
+        let entries = log.borrow();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[0],
+            (true, Some(("已开启开机自启".to_owned(), NoticeTone::Ok)))
+        );
+        assert_eq!(
+            entries[1],
+            (false, Some(("已关闭开机自启".to_owned(), NoticeTone::Ok)))
+        );
+    });
 }

@@ -9,12 +9,22 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use nsh_core::prelude::global;
+
+use crate::shell::NoticeCenter;
+
 /// Configuration for registering or querying an application's launch-at-login entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutoStartConfig {
-    /// Application identifier (used as the Windows Run value name, Linux `.desktop`
-    /// display name / filename stem, and macOS LaunchAgent label suffix).
+    /// Canonical application identifier (used as the Windows Run value name, Linux `.desktop`
+    /// display name / filename stem, and macOS LaunchAgent label suffix — e.g. `com.xcmm.wonton`).
     pub app_name: String,
+    /// Optional legacy application names (e.g. `"Wonton"`) that older versions may have written.
+    ///
+    /// - [`Self::is_enabled`] returns `true` if `app_name` or any legacy name is registered.
+    /// - [`Self::enable`] writes the canonical `app_name` entry and removes any legacy entries.
+    /// - [`Self::disable`] removes both `app_name` and all legacy entries.
+    pub legacy_names: Vec<String>,
     /// Optional explicit executable path. When `None`, [`std::env::current_exe`] is used.
     pub exe_path: Option<PathBuf>,
     /// Optional command-line arguments passed when the OS launches the app at login
@@ -28,9 +38,26 @@ impl AutoStartConfig {
     pub fn new(app_name: impl Into<String>) -> Self {
         Self {
             app_name: app_name.into(),
+            legacy_names: Vec::new(),
             exe_path: None,
             args: Vec::new(),
         }
+    }
+
+    /// Appends a legacy application name to migrate from or clean up alongside `app_name`.
+    pub fn with_legacy_name(mut self, name: impl Into<String>) -> Self {
+        self.legacy_names.push(name.into());
+        self
+    }
+
+    /// Appends multiple legacy application names to migrate from or clean up alongside `app_name`.
+    pub fn with_legacy_names<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.legacy_names.extend(names.into_iter().map(Into::into));
+        self
     }
 
     /// Overrides the executable path instead of resolving [`std::env::current_exe`].
@@ -55,23 +82,22 @@ impl AutoStartConfig {
         self
     }
 
-    /// Returns whether launch-at-login is currently registered for this app.
+    /// Returns whether launch-at-login is currently registered under `app_name`
+    /// or any entry in [`Self::legacy_names`].
     pub fn is_enabled(&self) -> io::Result<bool> {
-        let name = validate_app_name(&self.app_name)?;
-        platform_is_enabled(name)
+        self.is_enabled_with(platform_is_enabled)
     }
 
-    /// Registers launch-at-login for this app, overwriting any previous entry with the same name.
+    /// Registers launch-at-login under `app_name` (overwriting any previous entry)
+    /// and removes any entries in [`Self::legacy_names`].
     pub fn enable(&self) -> io::Result<()> {
-        let name = validate_app_name(&self.app_name)?;
-        let exe = self.resolve_exe_path()?;
-        platform_enable(name, &exe, &self.args)
+        self.enable_with(platform_enable, platform_disable)
     }
 
-    /// Removes the launch-at-login registration for this app. Succeeds if already disabled.
+    /// Removes the launch-at-login registration for `app_name` and all [`Self::legacy_names`].
+    /// Succeeds if already disabled.
     pub fn disable(&self) -> io::Result<()> {
-        let name = validate_app_name(&self.app_name)?;
-        platform_disable(name)
+        self.disable_with(platform_disable)
     }
 
     /// Enables or disables launch-at-login according to `enabled`.
@@ -81,6 +107,54 @@ impl AutoStartConfig {
         } else {
             self.disable()
         }
+    }
+
+    fn is_enabled_with(&self, mut check: impl FnMut(&str) -> io::Result<bool>) -> io::Result<bool> {
+        let (name, legacy) = self.validated_names()?;
+        if check(name)? {
+            return Ok(true);
+        }
+        for old in legacy {
+            if check(old)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn enable_with(
+        &self,
+        mut enable_fn: impl FnMut(&str, &Path, &[String]) -> io::Result<()>,
+        mut disable_fn: impl FnMut(&str) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let (name, legacy) = self.validated_names()?;
+        let exe = self.resolve_exe_path()?;
+        enable_fn(name, &exe, &self.args)?;
+        for old in legacy {
+            disable_fn(old)?;
+        }
+        Ok(())
+    }
+
+    fn disable_with(&self, mut disable_fn: impl FnMut(&str) -> io::Result<()>) -> io::Result<()> {
+        let (name, legacy) = self.validated_names()?;
+        disable_fn(name)?;
+        for old in legacy {
+            disable_fn(old)?;
+        }
+        Ok(())
+    }
+
+    fn validated_names(&self) -> io::Result<(&str, Vec<&str>)> {
+        let canonical = validate_app_name(&self.app_name)?;
+        let mut legacy = Vec::with_capacity(self.legacy_names.len());
+        for raw in &self.legacy_names {
+            let valid = validate_app_name(raw)?;
+            if valid != canonical && !legacy.contains(&valid) {
+                legacy.push(valid);
+            }
+        }
+        Ok((canonical, legacy))
     }
 
     fn resolve_exe_path(&self) -> io::Result<PathBuf> {
@@ -101,6 +175,131 @@ impl AutoStartConfig {
             ));
         }
         Ok(path)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Surface-global reactive controller
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct AutoStartState {
+    app_id: Option<&'static str>,
+    legacy_name: Option<&'static str>,
+    enabled: bool,
+    test_mode: bool,
+}
+
+fn config_for(app_id: &str, legacy_name: Option<&str>) -> AutoStartConfig {
+    let mut cfg = AutoStartConfig::new(app_id);
+    if let Some(legacy) = legacy_name {
+        cfg = cfg.with_legacy_name(legacy);
+    }
+    cfg
+}
+
+/// Initializes the surface-global reactive auto-start controller for `app_id`
+/// (with an optional `legacy_name` to migrate from) and queries the current OS state.
+///
+/// On OS query error, logs a warning via `log::warn!` and defaults to `false`.
+pub fn init_autostart(app_id: &'static str, legacy_name: Option<&'static str>) {
+    let enabled = match config_for(app_id, legacy_name).is_enabled() {
+        Ok(v) => v,
+        Err(err) => {
+            log::warn!("failed to query autostart state for {app_id}: {err}");
+            false
+        }
+    };
+    global::<AutoStartState>().set(AutoStartState {
+        app_id: Some(app_id),
+        legacy_name,
+        enabled,
+        test_mode: false,
+    });
+}
+
+/// Initializes the surface-global auto-start controller in in-memory test mode so
+/// headless UI tests never read or mutate the live OS registry / autostart directory.
+pub fn init_autostart_for_test(initial: bool) {
+    global::<AutoStartState>().set(AutoStartState {
+        app_id: None,
+        legacy_name: None,
+        enabled: initial,
+        test_mode: true,
+    });
+}
+
+/// Reactively reads whether launch-at-login is currently enabled in the global controller.
+pub fn autostart_enabled() -> bool {
+    global::<AutoStartState>().with(|s| s.enabled)
+}
+
+/// Re-synchronizes the global auto-start state from the OS (no-op in test mode).
+pub fn refresh_autostart() {
+    let state = global::<AutoStartState>();
+    let (test_mode, app_id, legacy_name) =
+        state.with_untracked(|s| (s.test_mode, s.app_id, s.legacy_name));
+    if test_mode {
+        return;
+    }
+    let Some(app_id) = app_id else {
+        return;
+    };
+    match config_for(app_id, legacy_name).is_enabled() {
+        Ok(actual) => {
+            state.update(|s| {
+                if s.enabled != actual {
+                    s.enabled = actual;
+                }
+            });
+        }
+        Err(err) => {
+            log::warn!("failed to refresh autostart state for {app_id}: {err}");
+        }
+    }
+}
+
+/// Updates the global auto-start setting and emits a [`NoticeCenter::global`] toast.
+///
+/// Re-exported as [`crate::shell::set_autostart_enabled`].
+/// In test mode, updates the reactive signal in memory without touching the OS.
+pub fn set_global_autostart_enabled(enabled: bool) {
+    let state = global::<AutoStartState>();
+    let (test_mode, app_id, legacy_name) =
+        state.with_untracked(|s| (s.test_mode, s.app_id, s.legacy_name));
+
+    if test_mode {
+        state.update(|s| s.enabled = enabled);
+        NoticeCenter::global().notify_ok(if enabled {
+            "已开启开机自启"
+        } else {
+            "已关闭开机自启"
+        });
+        return;
+    }
+
+    let Some(app_id) = app_id else {
+        log::warn!("autostart controller was not initialized before toggling");
+        NoticeCenter::global().notify_bad("设置开机自启失败：未初始化自启配置");
+        return;
+    };
+
+    let cfg = config_for(app_id, legacy_name);
+    match cfg.set_enabled(enabled) {
+        Ok(()) => {
+            state.update(|s| s.enabled = enabled);
+            NoticeCenter::global().notify_ok(if enabled {
+                "已开启开机自启"
+            } else {
+                "已关闭开机自启"
+            });
+        }
+        Err(err) => {
+            log::warn!("failed to set autostart for {app_id} to {enabled}: {err}");
+            let actual = cfg.is_enabled().unwrap_or(false);
+            state.update(|s| s.enabled = actual);
+            NoticeCenter::global().notify_bad(format!("设置开机自启失败：{err}"));
+        }
     }
 }
 
@@ -792,21 +991,74 @@ mod tests {
 
     #[test]
     fn config_builder_preserves_fields_and_rejects_empty_exe_path() {
-        let cfg = AutoStartConfig::new("Wonton")
+        let cfg = AutoStartConfig::new("com.xcmm.wonton")
+            .with_legacy_name("Wonton")
+            .with_legacy_names(["WontonLegacy"])
             .with_exe_path(r"C:\Apps\wonton.exe")
             .with_arg("--minimized")
             .with_args(["--silent"]);
-        assert_eq!(cfg.app_name, "Wonton");
+        assert_eq!(cfg.app_name, "com.xcmm.wonton");
+        assert_eq!(cfg.legacy_names, vec!["Wonton", "WontonLegacy"]);
         assert_eq!(cfg.exe_path.as_deref(), Some(Path::new(r"C:\Apps\wonton.exe")));
         assert_eq!(cfg.args, vec!["--minimized", "--silent"]);
 
-        let empty_exe = AutoStartConfig::new("Wonton").with_exe_path("");
+        let empty_exe = AutoStartConfig::new("com.xcmm.wonton").with_exe_path("");
         assert!(empty_exe.enable().is_err());
+
+        let invalid_legacy = AutoStartConfig::new("com.xcmm.wonton").with_legacy_name("bad/name");
+        assert!(invalid_legacy.is_enabled().is_err());
+        assert!(invalid_legacy.disable().is_err());
+    }
+
+    #[test]
+    fn legacy_names_migration_reads_migrates_and_cleans_up_both() {
+        use std::cell::RefCell;
+        use std::collections::BTreeSet;
+
+        let store = RefCell::new(BTreeSet::from(["Wonton".to_owned()]));
+        let cfg = AutoStartConfig::new("com.xcmm.wonton")
+            .with_legacy_name("Wonton")
+            .with_exe_path(r"C:\Program Files\Wonton\Wonton.exe");
+
+        // `is_enabled` sees the legacy key before migration.
+        assert!(cfg
+            .is_enabled_with(|name| Ok(store.borrow().contains(name)))
+            .unwrap());
+
+        // `enable` writes canonical key and deletes legacy key.
+        cfg.enable_with(
+            |name, _, _| {
+                store.borrow_mut().insert(name.to_owned());
+                Ok(())
+            },
+            |name| {
+                store.borrow_mut().remove(name);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(store.borrow().contains("com.xcmm.wonton"));
+        assert!(!store.borrow().contains("Wonton"));
+        assert!(cfg
+            .is_enabled_with(|name| Ok(store.borrow().contains(name)))
+            .unwrap());
+
+        // Re-seed legacy key alongside canonical key: `disable` removes BOTH.
+        store.borrow_mut().insert("Wonton".to_owned());
+        cfg.disable_with(|name| {
+            store.borrow_mut().remove(name);
+            Ok(())
+        })
+        .unwrap();
+        assert!(store.borrow().is_empty());
+        assert!(!cfg
+            .is_enabled_with(|name| Ok(store.borrow().contains(name)))
+            .unwrap());
     }
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn windows_registry_round_trips_safely_in_isolated_test_subkey() {
+    fn windows_registry_round_trips_and_migrates_legacy_in_isolated_test_subkey() {
         struct TestKeyGuard(String);
         impl Drop for TestKeyGuard {
             fn drop(&mut self) {
@@ -817,19 +1069,48 @@ mod tests {
         let subkey = format!(r"Software\BentoAutostartUnitTest_{}", std::process::id());
         let _guard = TestKeyGuard(subkey.clone());
 
-        assert!(!win::is_enabled_in(&subkey, "WontonTest").unwrap());
+        let cfg = AutoStartConfig::new("com.xcmm.wonton.test")
+            .with_legacy_name("WontonLegacyTest")
+            .with_exe_path(r"C:\Program Files\Wonton\Wonton.exe")
+            .with_arg("--minimized");
+
+        assert!(!cfg
+            .is_enabled_with(|n| win::is_enabled_in(&subkey, n))
+            .unwrap());
+
+        // Simulate a legacy v1.1.0/v1.3.0 entry.
         win::enable_in(
             &subkey,
-            "WontonTest",
-            Path::new(r"C:\Program Files\Wonton\wonton.exe"),
-            &["--minimized".to_owned()],
+            "WontonLegacyTest",
+            Path::new(r"C:\Program Files\Wonton\Wonton.exe"),
+            &[],
         )
         .unwrap();
-        assert!(win::is_enabled_in(&subkey, "WontonTest").unwrap());
+        assert!(cfg
+            .is_enabled_with(|n| win::is_enabled_in(&subkey, n))
+            .unwrap());
 
-        win::disable_in(&subkey, "WontonTest").unwrap();
-        assert!(!win::is_enabled_in(&subkey, "WontonTest").unwrap());
+        // Enabling canonical migrates and deletes the legacy value.
+        cfg.enable_with(
+            |n, exe, args| win::enable_in(&subkey, n, exe, args),
+            |n| win::disable_in(&subkey, n),
+        )
+        .unwrap();
+        assert!(win::is_enabled_in(&subkey, "com.xcmm.wonton.test").unwrap());
+        assert!(!win::is_enabled_in(&subkey, "WontonLegacyTest").unwrap());
+
+        // Re-add legacy value and verify `disable` removes both.
+        win::enable_in(
+            &subkey,
+            "WontonLegacyTest",
+            Path::new(r"C:\Program Files\Wonton\Wonton.exe"),
+            &[],
+        )
+        .unwrap();
+        cfg.disable_with(|n| win::disable_in(&subkey, n)).unwrap();
+        assert!(!win::is_enabled_in(&subkey, "com.xcmm.wonton.test").unwrap());
+        assert!(!win::is_enabled_in(&subkey, "WontonLegacyTest").unwrap());
         // Second disable is idempotent.
-        win::disable_in(&subkey, "WontonTest").unwrap();
+        cfg.disable_with(|n| win::disable_in(&subkey, n)).unwrap();
     }
 }

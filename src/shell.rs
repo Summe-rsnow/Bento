@@ -14,10 +14,15 @@ use nsh_core::prelude::*;
 use nsh_core::storage::Storage;
 use serde::{Deserialize, Serialize};
 
+pub use crate::autostart::{
+    autostart_enabled, init_autostart, init_autostart_for_test, refresh_autostart,
+    set_global_autostart_enabled as set_autostart_enabled,
+};
+
 use crate::ui::{
     action, checkbox, focus_ring, icon_action_with_tip, icons, modal_dialog, notice_toast,
-    radio_option, radius, segmented_icon, toolbar_separator, ButtonKind, IconKind, ValueTone,
-    MOTION_FAST_MS,
+    radio_option, radius, segmented_icon, toggle_switch, toolbar_separator, ButtonKind, IconKind,
+    ValueTone, MOTION_FAST_MS,
 };
 
 /// Default `Storage` key used by [`remember_window_placement`].
@@ -539,6 +544,27 @@ pub fn autostart_menu_item(enabled: bool, on_toggle: impl Fn(bool) + 'static) ->
     MenuItem::new("开机自启")
         .checked(enabled)
         .on_select(move || on_toggle(!enabled))
+}
+
+/// Builds a checkable system tray menu item wired to the global [`init_autostart`] controller.
+pub fn autostart_tray_item() -> MenuItem {
+    autostart_menu_item(autostart_enabled(), set_autostart_enabled)
+}
+
+/// Renders the standard non-draggable title-bar `开机自启` toggle switch wired to the global
+/// [`init_autostart`] controller.
+pub fn title_bar_autostart_toggle() -> impl IntoElement {
+    view()
+        .window_drag(false)
+        .flex_shrink_0()
+        .flex_row()
+        .items_center()
+        .child(toggle_switch(
+            autostart_enabled,
+            "开机自启",
+            Some("开机自启"),
+            set_autostart_enabled,
+        ))
 }
 
 /// Modal dialog asking whether clicking close should minimize to tray or quit,
