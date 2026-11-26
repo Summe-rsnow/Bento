@@ -8,11 +8,19 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use nsh_base::{button as base_button, theme};
-use nsh_core::desktop::{TitleBarOptions, TitleBarStyle, WindowAttributes, WindowPlacement};
-use nsh_core::element::desktop::{current_window, on_app_quit, quit, title_bar, MenuItem, WindowRef};
+use nsh_core::desktop::{
+    ProgressState, TitleBarOptions, TitleBarStyle, WindowAttributes, WindowKind, WindowPlacement,
+    WindowProgress,
+};
+use nsh_core::element::desktop::{
+    current_window, on_app_quit, on_reopen, quit, title_bar, window, MenuItem, Window, WindowRef,
+};
 use nsh_core::prelude::*;
 use nsh_core::storage::Storage;
 use serde::{Deserialize, Serialize};
+
+pub use nsh_core::desktop::{ProgressState as WindowProgressState, QuitMode, WindowProgress as DesktopWindowProgress};
+pub use nsh_core::element::desktop::set_quit_mode;
 
 pub use crate::autostart::{
     autostart_enabled, init_autostart, init_autostart_for_test, refresh_autostart,
@@ -201,9 +209,11 @@ pub(crate) fn flush_registered_window_placement(window: &WindowRef) {
     }
 }
 
-/// Configures the current desktop window with a hidden native title bar,
-/// minimum size bounds, and intercepted close button (`close_on_press = false`).
-pub fn init_desktop_window(min_width: f32, min_height: f32, title_bar_height: f32) {
+fn desktop_window_attributes(
+    min_width: f32,
+    min_height: f32,
+    title_bar_height: f32,
+) -> WindowAttributes {
     let mut tb = TitleBarOptions::default();
     tb.style = TitleBarStyle::Hidden;
     tb.height = Some(px(title_bar_height));
@@ -211,7 +221,113 @@ pub fn init_desktop_window(min_width: f32, min_height: f32, title_bar_height: f3
     attrs.title_bar = Some(tb);
     attrs.min_size = Some(Some(size(px(min_width), px(min_height))));
     attrs.close_on_press = Some(false);
-    current_window().set(attrs);
+    attrs
+}
+
+/// Configures `current_window()` with a hidden native title bar, minimum size bounds,
+/// and intercepted close button (`close_on_press = false`).
+///
+/// Under NSH 0.7+ Window Model v2, call this inside a [`window()`] / [`desktop_window()`]
+/// content builder so [`current_window()`] targets the visible window rather than the
+/// invisible app host.
+pub fn init_desktop_window(min_width: f32, min_height: f32, title_bar_height: f32) {
+    current_window().set(desktop_window_attributes(
+        min_width,
+        min_height,
+        title_bar_height,
+    ));
+}
+
+/// Restores, shows, and focuses `window` (used when restoring from tray, global hotkeys,
+/// or `singleInstance` reopen events).
+pub fn restore_and_focus_window(window: &WindowRef) {
+    window.restore();
+    window.show();
+    window.focus();
+}
+
+#[derive(Default, Clone)]
+struct ReopenBoundWindows {
+    next_id: u64,
+    entries: Vec<(String, u64)>,
+}
+
+/// Registers an `on_reopen` listener under the current owner that restores, shows,
+/// and focuses `window` when a `singleInstance` relaunch or OS reopen occurs.
+///
+/// Deduplicated per window id so calling both [`desktop_window`] and [`bind_close_handler`]
+/// registers only a single active listener.
+pub fn bind_reopen_handler(window: WindowRef) {
+    let Some(reg) = try_global::<ReopenBoundWindows>() else {
+        return;
+    };
+    let win_id = window.id().to_owned();
+    let already_bound = reg.with_untracked(|r| r.entries.iter().any(|(id, _)| id == &win_id));
+    if already_bound {
+        return;
+    }
+    let mut reg_id = 0_u64;
+    reg.update(|r| {
+        r.next_id = r.next_id.wrapping_add(1);
+        reg_id = r.next_id;
+        r.entries.push((win_id, reg_id));
+    });
+    cleanup(move || {
+        if let Some(reg) = try_global::<ReopenBoundWindows>() {
+            reg.update(|r| r.entries.retain(|(_, id)| *id != reg_id));
+        }
+    });
+    on_reopen(move || {
+        restore_and_focus_window(&window);
+    });
+}
+
+/// Builds the primary desktop window (`id = "main"`, `WindowKind::Normal`) configured for
+/// NSH 0.7+ Window Model v2 with a hidden native title bar, minimum size bounds,
+/// intercepted close presses (`close_on_press = false`), and automatic `on_reopen`
+/// restore/focus handling.
+///
+/// Inside `content()`, [`current_window()`] resolves to this window's [`WindowRef`] (so
+/// [`remember_window_placement`], [`bind_close_handler`], and [`set_window_progress`]
+/// target the visible window rather than the invisible app host).
+pub fn desktop_window<E: IntoElements>(
+    title: impl IntoReactive<String>,
+    min_width: f32,
+    min_height: f32,
+    title_bar_height: f32,
+    content: impl Fn() -> E + 'static,
+) -> Window {
+    let attrs = desktop_window_attributes(min_width, min_height, title_bar_height);
+    window()
+        .id("main")
+        .kind(WindowKind::Normal)
+        .title(title)
+        .attributes(attrs)
+        .content(move || {
+            bind_reopen_handler(current_window());
+            content()
+        })
+}
+
+/// Updates taskbar (Windows/Linux) or Dock (macOS) progress on `window`.
+///
+/// Finite values in `value` are clamped to `0.0..=1.0`; non-finite values are treated as `None`.
+pub fn set_window_progress(window: &WindowRef, state: ProgressState, value: Option<f32>) {
+    let mut progress = WindowProgress::default();
+    progress.state = state;
+    progress.value = value
+        .filter(|v| v.is_finite())
+        .map(|v| Percentage(v.clamp(0.0, 1.0)));
+    let mut attrs = WindowAttributes::default();
+    attrs.progress = Some(Some(progress));
+    window.set(attrs);
+}
+
+/// Clears any taskbar / Dock progress indicator on `window`.
+pub fn clear_window_progress(window: &WindowRef) {
+    let mut attrs = WindowAttributes::default();
+    attrs.progress = Some(None);
+    window.set(attrs);
 }
 
 /// Builds a draggable hidden-title-bar frame reserving native window-button insets.
@@ -495,12 +611,14 @@ impl CloseBehavior {
     }
 }
 
-/// Installs the standard close-button handler on `window`.
+/// Installs the standard close-button handler on `window` and ensures `on_reopen`
+/// restores and focuses `window` when relaunched via `singleInstance`.
 pub fn bind_close_handler(
     window: WindowRef,
     get_behavior: impl Fn() -> CloseBehavior + 'static,
     on_ask: impl Fn() + 'static,
 ) {
+    bind_reopen_handler(window.clone());
     let win = window.clone();
     window.on_close_press(move |_reason| match get_behavior() {
         CloseBehavior::Ask => {

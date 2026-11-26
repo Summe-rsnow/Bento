@@ -5,7 +5,7 @@ use nsh_core::element::IntoTooltip;
 use nsh_core::prelude::*;
 
 use super::icons::svg_icon;
-use super::{color, focus_ring, radius, MOTION_FAST_MS};
+use super::{color, focus_ring, radius, MOTION_FAST_MS, MOTION_INSTANT_MS};
 
 /// Semantic button emphasis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,7 +54,7 @@ pub fn action(
     label: impl IntoReactive<SharedString>,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
-    build_action(kind, label, None, false, || false, on_press)
+    build_action(kind, label, None, false, || false, || false, on_press)
 }
 
 /// A labeled action button (32pt desktop scale), disabled while `disabled` reads true.
@@ -64,7 +64,18 @@ pub fn action_disabled(
     disabled: impl Fn() -> bool + 'static,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
-    build_action(kind, label, None, false, disabled, on_press)
+    build_action(kind, label, None, false, disabled, || false, on_press)
+}
+
+/// A labeled action button (32pt desktop scale) that marks itself busy for screen readers
+/// and disables activation while `busy` reads true.
+pub fn action_busy(
+    kind: ButtonKind,
+    label: impl IntoReactive<SharedString>,
+    busy: impl Fn() -> bool + Copy + 'static,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    build_action(kind, label, None, false, busy, busy, on_press)
 }
 
 /// A compact labeled action button (26pt row scale), enabled.
@@ -73,7 +84,7 @@ pub fn action_sm(
     label: impl IntoReactive<SharedString>,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
-    build_action(kind, label, None, true, || false, on_press)
+    build_action(kind, label, None, true, || false, || false, on_press)
 }
 
 /// A compact labeled action button (26pt row scale), disabled while `disabled` reads true.
@@ -83,7 +94,7 @@ pub fn action_sm_disabled(
     disabled: impl Fn() -> bool + 'static,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
-    build_action(kind, label, None, true, disabled, on_press)
+    build_action(kind, label, None, true, disabled, || false, on_press)
 }
 
 /// A labeled action button with a leading 14pt SVG icon.
@@ -94,7 +105,15 @@ pub fn action_with_icon(
     disabled: impl Fn() -> bool + 'static,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
-    build_action(kind, label, Some(icon_markup), false, disabled, on_press)
+    build_action(
+        kind,
+        label,
+        Some(icon_markup),
+        false,
+        disabled,
+        || false,
+        on_press,
+    )
 }
 
 fn build_action(
@@ -103,11 +122,13 @@ fn build_action(
     icon_markup: Option<&'static str>,
     compact: bool,
     disabled: impl Fn() -> bool + 'static,
+    busy: impl Fn() -> bool + 'static,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
     let element = base_button()
         .on_press(on_press)
         .disabled(disabled)
+        .busy(busy)
         .h(px(if compact { 26.0 } else { 32.0 }))
         .px(px(if compact { 10.0 } else { 12.0 }))
         .flex_row()
@@ -161,23 +182,30 @@ fn build_action(
     }
 }
 
-/// A desktop hover/focus tooltip following the popover surface tokens.
+/// A desktop hover/focus tooltip following the popover surface tokens and
+/// subtle fade/scale entrance/exit motion (automatically skipped when `reduce_motion` is set).
 pub fn hint_tooltip(label: impl IntoReactive<SharedString>) -> impl IntoTooltip {
-    tooltip().delay(250.0).child(
-        view()
-            .px_2()
-            .py_1()
-            .rounded(radius)
-            .border_1()
-            .border_color(move || theme().border)
-            .bg(move || theme().popover)
-            .shadow_sm()
-            .child(
-                text(label)
-                    .text_xs()
-                    .text_color(move || theme().popover_foreground),
-            ),
-    )
+    tooltip()
+        .delay(250.0)
+        .transition_all()
+        .duration(MOTION_INSTANT_MS)
+        .starting_style(|s| s.opacity(0.0).scale(0.95))
+        .ending_style(|s| s.opacity(0.0).scale(0.95))
+        .child(
+            view()
+                .px_2()
+                .py_1()
+                .rounded(radius)
+                .border_1()
+                .border_color(move || theme().border)
+                .bg(move || theme().popover)
+                .shadow_sm()
+                .child(
+                    text(label)
+                        .text_xs()
+                        .text_color(move || theme().popover_foreground),
+                ),
+        )
 }
 
 /// A non-text vector icon action with screen-reader label and hover tooltip.
@@ -256,6 +284,7 @@ pub fn icon_action_spinning_with_tip<M>(
     let base = base_button()
         .on_press(on_press)
         .disabled(disabled)
+        .busy(spinning)
         .accessibility_label(a11y_label)
         .w(px(size))
         .h(px(size))

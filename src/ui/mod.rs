@@ -11,7 +11,7 @@ pub mod progress;
 pub mod surface;
 
 pub use button::{
-    action, action_disabled, action_sm, action_sm_disabled, action_with_icon, button,
+    action, action_busy, action_disabled, action_sm, action_sm_disabled, action_with_icon, button,
     external_link, external_link_button, hint_tooltip, icon_action, icon_action_disabled,
     icon_action_spinning_with_tip, icon_action_with_tip, segmented_icon, ButtonKind, IconKind,
 };

@@ -1,16 +1,16 @@
 [package]
 name = "bento"
-version = "1.1.1"
+version = "1.2.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/Summe-rsnow/Bento"
-description = "Shared NSH 0.6.1 UI component library and desktop shell infrastructure."
+description = "Shared NSH 0.7.1 UI component library and desktop shell infrastructure."
 
 [workspace]
 
 [dependencies]
-nsh-core = { version = "0.6.1", features = ["svg"] }
-nsh-base = { version = "0.6.1", default-features = false }
+nsh-core = { version = "0.7.1", features = ["svg"] }
+nsh-base = { version = "0.7.1", default-features = false }
 base64 = "0.23"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }

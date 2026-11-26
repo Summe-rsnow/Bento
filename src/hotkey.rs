@@ -192,9 +192,7 @@ pub fn toggle_window_visibility(window: &WindowRef) {
         crate::shell::flush_registered_window_placement(window);
         window.hide();
     } else {
-        window.restore();
-        window.show();
-        window.focus();
+        crate::shell::restore_and_focus_window(window);
     }
 }
 

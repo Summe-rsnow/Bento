@@ -8,12 +8,13 @@ use bento::hotkey::{
     bind_global_hotkey, toggle_window_visibility, HotkeyBinding, HotkeyStatus,
 };
 use bento::shell::{
-    autostart_enabled, autostart_tray_item, bind_close_handler, init_autostart_for_test,
-    refresh_autostart, remember_window_placement_with_key, save_window_placement,
-    set_autostart_enabled, title_bar_autostart_toggle, title_bar_right_with_theme,
-    title_bar_shell, CloseBehavior, NoticeCenter, NoticeTone, ThemeMode,
+    autostart_enabled, autostart_tray_item, bind_close_handler, clear_window_progress,
+    desktop_window, init_autostart_for_test, refresh_autostart, remember_window_placement_with_key,
+    save_window_placement, set_autostart_enabled, set_window_progress, title_bar_autostart_toggle,
+    title_bar_right_with_theme, title_bar_shell, CloseBehavior, NoticeCenter, NoticeTone,
+    ThemeMode, WindowProgressState,
 };
-use bento::ui::{hotkey_badge, hotkey_editor};
+use bento::ui::{action_busy, hotkey_badge, hotkey_editor, icon_action_spinning_with_tip, icons, ButtonKind, IconKind};
 use bento::DEFAULT_THEME_JSON;
 use nsh_base::theme;
 use nsh_core::desktop::{
@@ -56,7 +57,7 @@ impl StorageBackend for MemoryBackend {
         Ok(self.entries.lock().unwrap().clone())
     }
 
-    fn write(&self, change: StorageChange) {
+    fn write(&self, change: StorageChange) -> Result<(), String> {
         let mut entries = self.entries.lock().unwrap();
         match change {
             StorageChange::Set(k, v) => {
@@ -67,6 +68,7 @@ impl StorageBackend for MemoryBackend {
             }
             StorageChange::Clear => entries.clear(),
         }
+        Ok(())
     }
 }
 
@@ -119,6 +121,45 @@ fn desktop_commands(batch: &MountBatch) -> Vec<&DesktopCommand> {
         .collect()
 }
 
+fn open_window_id(batch: &MountBatch, window_id: &str) -> NodeId {
+    batch
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MountItem::Command {
+                id,
+                command: Command::Desktop(cmd),
+            } => match cmd.as_ref() {
+                DesktopCommand::OpenWindow(open) if open.options.id == window_id => Some(*id),
+                _ => None,
+            },
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing OpenWindow for `{window_id}` in mount batch"))
+}
+
+fn window_commands(batch: &MountBatch, win_id: NodeId) -> Vec<&DesktopCommand> {
+    batch
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            MountItem::Command {
+                id,
+                command: Command::Desktop(cmd),
+            } if *id == win_id => Some(cmd.as_ref()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn send_window_state(core: &mut Core<ApproxTextEngine>, win_id: NodeId, state: WindowState) {
+    let _ = core.component_event(
+        win_id,
+        EventKind::Window,
+        &EventPayload::Window(Box::new(WindowEvent::State(Box::new(state)))),
+    );
+}
+
 fn texts_of(batch: &MountBatch) -> Vec<String> {
     batch
         .items
@@ -137,29 +178,42 @@ fn window_placement_restores_debounces_ignores_minimized_and_flushes_on_quit() {
     let key = "test.window.placement.v1";
     let storage = MemoryBackend::seeded([(key, saved_json.clone())]);
 
-    let initial_state = make_window_state(saved, true, false, true);
-    let mut core = setup_core(storage.clone(), desktop_env(Some(initial_state)));
+    let mut core = setup_core(storage.clone(), desktop_env(None));
 
     #[component]
     fn PlacementApp() -> impl IntoElement {
-        let win = current_window();
-        remember_window_placement_with_key(win, "test.window.placement.v1", 820.0, 540.0);
-        view().flex_1()
+        desktop_window("PlacementTest", 820.0, 540.0, 42.0, || {
+            let win = current_window();
+            remember_window_placement_with_key(win, "test.window.placement.v1", 820.0, 540.0);
+            view().flex_1()
+        })
     }
 
     core.mount_root(&Root::of::<PlacementApp>());
     let batch = core.commit().unwrap();
+    let win_id = open_window_id(&batch, "main");
     assert!(
-        desktop_commands(&batch).iter().any(|cmd| matches!(
+        window_commands(&batch, win_id).iter().any(|cmd| matches!(
             cmd,
             DesktopCommand::Request(WindowRequest::SetPlacement(p)) if *p == saved
         )),
-        "expected SetPlacement on startup"
+        "expected SetPlacement on startup, got {:?}",
+        window_commands(&batch, win_id)
     );
+
+    // Seed initial window state matching `saved`: no redundant write is scheduled.
+    send_window_state(&mut core, win_id, make_window_state(saved, true, false, true));
+    let _ = core.commit();
+    core.run_component_tasks();
+    assert_eq!(core.next_task_timer(), None);
 
     // Move window to B: before 250ms debounce expires, storage still holds A.
     let moved_b = make_placement(200.0, 150.0, 1100.0, 720.0);
-    core.set_environment(desktop_env(Some(make_window_state(moved_b, true, false, true))));
+    send_window_state(
+        &mut core,
+        win_id,
+        make_window_state(moved_b, true, false, true),
+    );
     let _ = core.commit();
     core.run_component_tasks();
     let due_b = core
@@ -170,7 +224,11 @@ fn window_placement_restores_debounces_ignores_minimized_and_flushes_on_quit() {
     // Wait briefly (< 250ms) then move window to C -> resets 250ms timer cleanly.
     std::thread::sleep(Duration::from_millis(80));
     let moved_c = make_placement(240.0, 180.0, 1180.0, 760.0);
-    core.set_environment(desktop_env(Some(make_window_state(moved_c, true, false, true))));
+    send_window_state(
+        &mut core,
+        win_id,
+        make_window_state(moved_c, true, false, true),
+    );
     let _ = core.commit();
     core.run_component_tasks();
     let due_c = core
@@ -198,18 +256,21 @@ fn window_placement_restores_debounces_ignores_minimized_and_flushes_on_quit() {
     // Move to valid D, then minimize immediately -> minimized state must NOT overwrite
     // and cancels D's pending timer, while cached valid D flushes synchronously on quit.
     let moved_d = make_placement(300.0, 220.0, 1200.0, 800.0);
-    core.set_environment(desktop_env(Some(make_window_state(moved_d, true, false, true))));
+    send_window_state(
+        &mut core,
+        win_id,
+        make_window_state(moved_d, true, false, true),
+    );
     let _ = core.commit();
     core.run_component_tasks();
     assert!(core.next_task_timer().is_some());
 
     let minimized_bad = make_placement(-32000.0, -32000.0, 160.0, 28.0);
-    core.set_environment(desktop_env(Some(make_window_state(
-        minimized_bad,
-        false,
-        true,
-        false,
-    ))));
+    send_window_state(
+        &mut core,
+        win_id,
+        make_window_state(minimized_bad, false, true, false),
+    );
     let _ = core.commit();
     core.run_component_tasks();
     assert_eq!(core.next_task_timer(), None);
@@ -222,24 +283,35 @@ fn window_placement_restores_debounces_ignores_minimized_and_flushes_on_quit() {
 }
 
 #[test]
-fn bind_close_handler_flushes_placement_before_tray_hide_and_save_window_placement_filters_invalid() {
+fn bind_close_handler_flushes_placement_before_tray_hide_reopens_and_filters_invalid() {
     let storage = Arc::new(MemoryBackend::default());
     let initial = make_placement(50.0, 60.0, 900.0, 600.0);
-    let mut core = setup_core(storage.clone(), desktop_env(Some(make_window_state(initial, true, false, true))));
+    let mut core = setup_core(storage.clone(), desktop_env(None));
 
     #[component]
     fn CloseApp() -> impl IntoElement {
-        let win = current_window();
-        remember_window_placement_with_key(win.clone(), "close.key", 820.0, 540.0);
-        bind_close_handler(win.clone(), || CloseBehavior::Tray, || {});
-        // Direct save_window_placement with too-high min_width does not save.
-        save_window_placement(&win, "direct.too_small", 2000.0, 540.0);
-        save_window_placement(&win, "direct.ok", 820.0, 540.0);
-        view().flex_1()
+        desktop_window("CloseTest", 820.0, 540.0, 42.0, || {
+            let win = current_window();
+            remember_window_placement_with_key(win.clone(), "close.key", 820.0, 540.0);
+            bind_close_handler(win.clone(), || CloseBehavior::Tray, || {});
+            view().flex_1().child(
+                view().test_id("save-direct").on_press(move || {
+                    // Direct save_window_placement with too-high min_width does not save.
+                    save_window_placement(&win, "direct.too_small", 2000.0, 540.0);
+                    save_window_placement(&win, "direct.ok", 820.0, 540.0);
+                }),
+            )
+        })
     }
 
     core.mount_root(&Root::of::<CloseApp>());
+    let batch = core.commit().unwrap();
+    let win_id = open_window_id(&batch, "main");
+    let save_btn = find_test_id(&batch, "save-direct");
+
+    send_window_state(&mut core, win_id, make_window_state(initial, true, false, true));
     let _ = core.commit();
+    let _ = press_node(&mut core, save_btn);
 
     assert!(storage.get("direct.too_small").is_none());
     assert_eq!(
@@ -249,24 +321,43 @@ fn bind_close_handler_flushes_placement_before_tray_hide_and_save_window_placeme
 
     // Move window and immediately press close BEFORE 250ms debounce expires.
     let updated = make_placement(310.0, 210.0, 1080.0, 680.0);
-    core.set_environment(desktop_env(Some(make_window_state(updated, true, false, true))));
+    send_window_state(&mut core, win_id, make_window_state(updated, true, false, true));
     let _ = core.commit();
     assert!(storage.get("close.key").is_none());
 
     let _ = core.component_event(
-        ROOT_ID,
+        win_id,
         EventKind::Window,
         &EventPayload::Window(Box::new(WindowEvent::ClosePress {
             reason: CloseReason::CloseButton,
         })),
     );
     let batch = core.commit().unwrap();
-    assert!(desktop_commands(&batch)
+    assert!(window_commands(&batch, win_id)
         .iter()
         .any(|cmd| matches!(cmd, DesktopCommand::Request(WindowRequest::Hide))));
     assert_eq!(
         storage.get("close.key").as_deref(),
         Some(serde_json::to_string(&updated).unwrap().as_str())
+    );
+
+    // Single-instance reopen restores, shows, and focuses the window exactly once.
+    core.reopened();
+    let batch = core.commit().unwrap();
+    let reqs: Vec<WindowRequest> = window_commands(&batch, win_id)
+        .into_iter()
+        .filter_map(|cmd| match cmd {
+            DesktopCommand::Request(req) => Some(req.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        reqs,
+        vec![
+            WindowRequest::Restore,
+            WindowRequest::Show,
+            WindowRequest::Focus
+        ]
     );
 }
 
@@ -490,29 +581,28 @@ fn bind_global_hotkey_validates_registers_handles_stale_generations_and_triggers
 #[test]
 fn toggle_window_visibility_respects_focus_visibility_and_minimized_state() {
     let storage = Arc::new(MemoryBackend::default());
-    let placement = make_placement(100.0, 100.0, 960.0, 640.0);
-    let mut core = setup_core(
-        storage.clone(),
-        desktop_env(Some(make_window_state(placement, true, false, true))),
-    );
+    let mut core = setup_core(storage.clone(), desktop_env(None));
 
     #[component]
     fn ToggleApp() -> impl IntoElement {
-        let win = current_window();
-        remember_window_placement_with_key(win.clone(), "toggle.placement.v1", 820.0, 540.0);
-        view().flex_1().child(
-            view().test_id("toggle-btn").on_press(move || {
-                toggle_window_visibility(&win);
-            }),
-        )
+        desktop_window("ToggleTest", 820.0, 540.0, 42.0, || {
+            let win = current_window();
+            remember_window_placement_with_key(win.clone(), "toggle.placement.v1", 820.0, 540.0);
+            view().flex_1().child(
+                view().test_id("toggle-btn").on_press(move || {
+                    toggle_window_visibility(&win);
+                }),
+            )
+        })
     }
 
     core.mount_root(&Root::of::<ToggleApp>());
     let batch = core.commit().unwrap();
+    let win_id = open_window_id(&batch, "main");
     let btn_id = find_test_id(&batch, "toggle-btn");
 
     let window_requests = |batch: &MountBatch| -> Vec<WindowRequest> {
-        desktop_commands(batch)
+        window_commands(batch, win_id)
             .into_iter()
             .filter_map(|cmd| match cmd {
                 DesktopCommand::Request(req) => Some(req.clone()),
@@ -523,7 +613,7 @@ fn toggle_window_visibility_respects_focus_visibility_and_minimized_state() {
 
     // Case 1: visible && focused && !minimized -> flush placement + Hide.
     let updated = make_placement(220.0, 140.0, 1040.0, 680.0);
-    core.set_environment(desktop_env(Some(make_window_state(updated, true, false, true))));
+    send_window_state(&mut core, win_id, make_window_state(updated, true, false, true));
     let _ = core.commit();
     assert!(storage.get("toggle.placement.v1").is_none());
 
@@ -535,7 +625,7 @@ fn toggle_window_visibility_respects_focus_visibility_and_minimized_state() {
     );
 
     // Case 2: hidden -> Restore + Show + Focus.
-    core.set_environment(desktop_env(Some(make_window_state(updated, false, false, false))));
+    send_window_state(&mut core, win_id, make_window_state(updated, false, false, false));
     let _ = core.commit();
     let batch = press_node(&mut core, btn_id);
     assert_eq!(
@@ -544,7 +634,7 @@ fn toggle_window_visibility_respects_focus_visibility_and_minimized_state() {
     );
 
     // Case 3: visible but unfocused -> Restore + Show + Focus.
-    core.set_environment(desktop_env(Some(make_window_state(updated, true, false, false))));
+    send_window_state(&mut core, win_id, make_window_state(updated, true, false, false));
     let _ = core.commit();
     let batch = press_node(&mut core, btn_id);
     assert_eq!(
@@ -553,13 +643,133 @@ fn toggle_window_visibility_respects_focus_visibility_and_minimized_state() {
     );
 
     // Case 4: visible && focused but minimized -> Restore + Show + Focus.
-    core.set_environment(desktop_env(Some(make_window_state(updated, true, true, true))));
+    send_window_state(&mut core, win_id, make_window_state(updated, true, true, true));
     let _ = core.commit();
     let batch = press_node(&mut core, btn_id);
     assert_eq!(
         window_requests(&batch),
         vec![WindowRequest::Restore, WindowRequest::Show, WindowRequest::Focus]
     );
+}
+
+#[test]
+fn window_progress_sets_clamps_and_clears_progress_attributes() {
+    let storage = Arc::new(MemoryBackend::default());
+    let mut core = setup_core(storage, desktop_env(None));
+
+    #[component]
+    fn ProgressApp() -> impl IntoElement {
+        desktop_window("ProgressTest", 820.0, 540.0, 42.0, || {
+            let win = current_window();
+            let win_set = win.clone();
+            let win_clear = win;
+            view()
+                .flex_1()
+                .child(view().test_id("set-progress").on_press(move || {
+                    set_window_progress(&win_set, WindowProgressState::Normal, Some(1.5));
+                }))
+                .child(view().test_id("clear-progress").on_press(move || {
+                    clear_window_progress(&win_clear);
+                }))
+        })
+    }
+
+    core.mount_root(&Root::of::<ProgressApp>());
+    let batch = core.commit().unwrap();
+    let win_id = open_window_id(&batch, "main");
+    let set_id = find_test_id(&batch, "set-progress");
+    let clear_id = find_test_id(&batch, "clear-progress");
+
+    let batch = press_node(&mut core, set_id);
+    let attrs = window_commands(&batch, win_id)
+        .into_iter()
+        .find_map(|cmd| match cmd {
+            DesktopCommand::SetAttributes(a) => Some(a),
+            _ => None,
+        })
+        .expect("expected SetAttributes with clamped progress");
+    let wp = attrs.progress.flatten().expect("expected Some(WindowProgress)");
+    assert_eq!(wp.state, WindowProgressState::Normal);
+    assert_eq!(wp.value, Some(Percentage(1.0)));
+
+    let batch = press_node(&mut core, clear_id);
+    let attrs = window_commands(&batch, win_id)
+        .into_iter()
+        .find_map(|cmd| match cmd {
+            DesktopCommand::SetAttributes(a) => Some(a),
+            _ => None,
+        })
+        .expect("expected SetAttributes clearing progress");
+    assert_eq!(attrs.progress, Some(None));
+}
+
+#[test]
+fn busy_actions_expose_accessibility_busy_and_disabled_state() {
+    let storage = Arc::new(MemoryBackend::default());
+    let mut core = setup_core(storage, desktop_env(None));
+
+    #[component]
+    fn BusyApp() -> impl IntoElement {
+        let is_busy = signal(false);
+        let clicks = signal(0_usize);
+        view()
+            .flex_1()
+            .child(action_busy(
+                ButtonKind::Primary,
+                move || {
+                    if is_busy.get() {
+                        "同步中…"
+                    } else {
+                        "立即同步"
+                    }
+                },
+                move || is_busy.get(),
+                move || {
+                    clicks.update(|n| *n += 1);
+                    is_busy.set(true);
+                },
+            ))
+            .child(icon_action_spinning_with_tip(
+                IconKind::Secondary,
+                icons::REFRESH,
+                "刷新",
+                "刷新列表",
+                move || is_busy.get(),
+                move || is_busy.get(),
+                move || {},
+            ))
+            .child(text(move || format!("clicks:{}", clicks.get())))
+    }
+
+    core.mount_root(&Root::of::<BusyApp>());
+    let batch = core.commit().unwrap();
+    let texts = texts_of(&batch);
+    assert!(texts.iter().any(|t| t == "立即同步"));
+    assert!(texts.iter().any(|t| t == "clicks:0"));
+
+    // Find the button node carrying label text "立即同步" and press it.
+    let btn_id = batch
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MountItem::ViewProps { id, props }
+                if props.accessibility.role == AccessibilityRole::Button =>
+            {
+                Some(*id)
+            }
+            _ => None,
+        })
+        .expect("expected button node");
+    let batch = press_node(&mut core, btn_id);
+    let texts = texts_of(&batch);
+    assert!(texts.iter().any(|t| t == "同步中…"));
+    assert!(texts.iter().any(|t| t == "clicks:1"));
+    assert!(batch.items.iter().any(|item| match item {
+        MountItem::ViewProps { props, .. } => {
+            props.accessibility.state.busy && props.accessibility.state.disabled
+        }
+        _ => false,
+    }));
 }
 
 #[test]

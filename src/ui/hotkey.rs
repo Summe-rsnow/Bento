@@ -7,7 +7,7 @@ use nsh_core::prelude::*;
 
 use crate::hotkey::{HotkeyBinding, HotkeyStatus};
 
-use super::button::{action_disabled, ButtonKind};
+use super::button::{action_busy, ButtonKind};
 use super::input::{text_field, toggle_switch};
 use super::nav::filter_chip;
 use super::surface::status_badge;
@@ -154,7 +154,7 @@ pub fn hotkey_editor_with_presets(
             .label("自定义快捷键")
             .on_submit(move |_: &str| apply_submit()),
         )
-        .child(action_disabled(
+        .child(action_busy(
             ButtonKind::Secondary,
             "应用",
             move || matches!(status_memo.get(), HotkeyStatus::Registering),

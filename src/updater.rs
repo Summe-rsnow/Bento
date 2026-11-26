@@ -7,7 +7,7 @@ use nsh_core::prelude::*;
 use serde_json::Value;
 
 use crate::ui::{
-    action, action_disabled, external_link, external_link_button, meta_row, modal_dialog, radius,
+    action, action_busy, external_link, external_link_button, meta_row, modal_dialog, radius,
     ButtonKind, ValueTone,
 };
 
@@ -494,7 +494,7 @@ pub fn about_dialog(
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(move || theme().foreground),
                             )
-                            .child(action_disabled(
+                            .child(action_busy(
                                 ButtonKind::Secondary,
                                 move || {
                                     if checking() {
