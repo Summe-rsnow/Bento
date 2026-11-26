@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use nsh_base::{button as base_button, theme};
 use nsh_core::desktop::{
-    ProgressState, TitleBarOptions, TitleBarStyle, WindowAttributes, WindowKind, WindowPlacement,
-    WindowProgress,
+    ProgressState, TitleBarOptions, TitleBarStyle, WindowAttributes, WindowKind, WindowMode,
+    WindowPlacement, WindowProgress,
 };
 use nsh_core::element::desktop::{
     current_window, on_app_quit, on_reopen, quit, title_bar, window, MenuItem, Window, WindowRef,
@@ -244,6 +244,29 @@ pub fn restore_and_focus_window(window: &WindowRef) {
     window.restore();
     window.show();
     window.focus();
+}
+
+/// Returns `true` when `window` is currently in [`WindowMode::FullScreen`].
+pub fn is_window_fullscreen(window: &WindowRef) -> bool {
+    window
+        .state()
+        .is_some_and(|st| st.mode == WindowMode::FullScreen)
+}
+
+/// Sets `window` to [`WindowMode::FullScreen`] when `fullscreen` is true, or
+/// [`WindowMode::Normal`] otherwise.
+pub fn set_window_fullscreen(window: &WindowRef, fullscreen: bool) {
+    window.set_mode(if fullscreen {
+        WindowMode::FullScreen
+    } else {
+        WindowMode::Normal
+    });
+}
+
+/// Toggles `window` between [`WindowMode::FullScreen`] and [`WindowMode::Normal`].
+pub fn toggle_window_fullscreen(window: &WindowRef) {
+    let fullscreen = untracked(|| is_window_fullscreen(window));
+    set_window_fullscreen(window, !fullscreen);
 }
 
 #[derive(Default, Clone)]

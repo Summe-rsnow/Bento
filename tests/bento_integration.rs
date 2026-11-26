@@ -9,12 +9,18 @@ use bento::hotkey::{
 };
 use bento::shell::{
     autostart_enabled, autostart_tray_item, bind_close_handler, clear_window_progress,
-    desktop_window, init_autostart_for_test, refresh_autostart, remember_window_placement_with_key,
-    save_window_placement, set_autostart_enabled, set_window_progress, title_bar_autostart_toggle,
-    title_bar_right_with_theme, title_bar_shell, CloseBehavior, NoticeCenter, NoticeTone,
-    ThemeMode, WindowProgressState,
+    desktop_window, init_autostart_for_test, is_window_fullscreen, refresh_autostart,
+    remember_window_placement_with_key, save_window_placement, set_autostart_enabled,
+    set_window_fullscreen, set_window_progress, title_bar_autostart_toggle,
+    title_bar_right_with_theme, title_bar_shell, toggle_window_fullscreen, CloseBehavior,
+    NoticeCenter, NoticeTone, ThemeMode, WindowProgressState,
 };
-use bento::ui::{action_busy, hotkey_badge, hotkey_editor, icon_action_spinning_with_tip, icons, ButtonKind, IconKind};
+use bento::ui::{
+    action_busy, hotkey_badge, hotkey_editor, icon_action_spinning_with_tip, icons,
+    search_input_reactive, segmented_text_group, segmented_text_item, sidebar_nav_item_reactive,
+    styled_context_menu, styled_menu, styled_menu_item, styled_menu_item_checked,
+    styled_menu_separator, styled_popover, svg_icon, tag_input, ButtonKind, IconKind,
+};
 use bento::DEFAULT_THEME_JSON;
 use nsh_base::theme;
 use nsh_core::desktop::{
@@ -959,4 +965,392 @@ fn autostart_controller_test_mode_toggles_state_and_emits_notices_without_os_mut
             (false, Some(("已关闭开机自启".to_owned(), NoticeTone::Ok)))
         );
     });
+}
+
+#[test]
+fn window_fullscreen_helpers_report_state_and_emit_set_mode_requests() {
+    let storage = Arc::new(MemoryBackend::default());
+    let mut core = setup_core(storage, desktop_env(None));
+
+    #[component]
+    fn FullscreenApp() -> impl IntoElement {
+        desktop_window("FullscreenTest", 900.0, 600.0, 48.0, || {
+            let win = current_window();
+            let win_enter = win.clone();
+            let win_exit = win.clone();
+            let win_toggle = win.clone();
+            view()
+                .flex_1()
+                .child(text(move || format!("fs:{}", is_window_fullscreen(&win))))
+                .child(view().test_id("fs-enter").on_press(move || {
+                    set_window_fullscreen(&win_enter, true);
+                }))
+                .child(view().test_id("fs-exit").on_press(move || {
+                    set_window_fullscreen(&win_exit, false);
+                }))
+                .child(view().test_id("fs-toggle").on_press(move || {
+                    toggle_window_fullscreen(&win_toggle);
+                }))
+        })
+    }
+
+    core.mount_root(&Root::of::<FullscreenApp>());
+    let batch = core.commit().unwrap();
+    let win_id = open_window_id(&batch, "main");
+    let enter_id = find_test_id(&batch, "fs-enter");
+    let exit_id = find_test_id(&batch, "fs-exit");
+    let toggle_id = find_test_id(&batch, "fs-toggle");
+    assert!(texts_of(&batch).iter().any(|t| t == "fs:false"));
+
+    let window_requests = |batch: &MountBatch| -> Vec<WindowRequest> {
+        window_commands(batch, win_id)
+            .into_iter()
+            .filter_map(|cmd| match cmd {
+                DesktopCommand::Request(req) => Some(req.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // Enter fullscreen
+    let batch = press_node(&mut core, enter_id);
+    assert_eq!(
+        window_requests(&batch),
+        vec![WindowRequest::SetMode(WindowMode::FullScreen)]
+    );
+
+    // Platform reports FullScreen state -> reactive text updates and toggle exits fullscreen
+    let fs_placement = WindowPlacement::new(
+        WindowMode::FullScreen,
+        Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(800.0))),
+    );
+    let mut fs_state = make_window_state(fs_placement, true, false, true);
+    fs_state.mode = WindowMode::FullScreen;
+    send_window_state(&mut core, win_id, fs_state);
+    let batch = core.commit().unwrap();
+    assert!(texts_of(&batch).iter().any(|t| t == "fs:true"));
+
+    let batch = press_node(&mut core, toggle_id);
+    assert_eq!(
+        window_requests(&batch),
+        vec![WindowRequest::SetMode(WindowMode::Normal)]
+    );
+
+    // Platform reports Normal state -> toggle enters fullscreen
+    let normal_placement = make_placement(100.0, 100.0, 960.0, 640.0);
+    send_window_state(
+        &mut core,
+        win_id,
+        make_window_state(normal_placement, true, false, true),
+    );
+    let batch = core.commit().unwrap();
+    assert!(texts_of(&batch).iter().any(|t| t == "fs:false"));
+
+    let batch = press_node(&mut core, toggle_id);
+    assert_eq!(
+        window_requests(&batch),
+        vec![WindowRequest::SetMode(WindowMode::FullScreen)]
+    );
+
+    let batch = press_node(&mut core, exit_id);
+    assert_eq!(
+        window_requests(&batch),
+        vec![WindowRequest::SetMode(WindowMode::Normal)]
+    );
+}
+
+#[test]
+fn ui_v130_controls_and_icons_render_and_update_reactively() {
+    let all_new_icons = [
+        ("BOOK", icons::BOOK, false),
+        ("STAR", icons::STAR, false),
+        ("STAR_FILLED", icons::STAR_FILLED, true),
+        ("CHEVRON_LEFT", icons::CHEVRON_LEFT, false),
+        ("CHEVRONS_LEFT", icons::CHEVRONS_LEFT, false),
+        ("CHEVRONS_RIGHT", icons::CHEVRONS_RIGHT, false),
+        ("ARROW_LEFT", icons::ARROW_LEFT, false),
+        ("EDIT", icons::EDIT, false),
+        ("MAXIMIZE", icons::MAXIMIZE, false),
+        ("MINIMIZE", icons::MINIMIZE, false),
+        ("ZOOM_IN", icons::ZOOM_IN, false),
+        ("ZOOM_OUT", icons::ZOOM_OUT, false),
+        ("LAYOUT_GRID", icons::LAYOUT_GRID, false),
+        ("COLUMNS", icons::COLUMNS, false),
+        ("CHECK_SQUARE", icons::CHECK_SQUARE, false),
+        ("TAG", icons::TAG, false),
+        ("CAMERA", icons::CAMERA, false),
+        ("LIST", icons::LIST, false),
+    ];
+    for (name, svg_src, is_filled) in all_new_icons {
+        assert!(svg_src.contains("viewBox=\"0 0 24 24\""), "{name}");
+        assert!(svg_src.contains("stroke=\"currentColor\""), "{name}");
+        assert!(svg_src.contains("stroke-width=\"1.9\""), "{name}");
+        if is_filled {
+            assert!(svg_src.contains("fill=\"currentColor\""), "{name}");
+        } else {
+            assert!(svg_src.contains("fill=\"none\""), "{name}");
+        }
+    }
+
+    let storage = Arc::new(MemoryBackend::default());
+    let mut core = setup_core(storage, desktop_env(None));
+
+    #[component]
+    fn V130ControlsApp() -> impl IntoElement {
+        let lang_en = signal(false);
+        let view_mode = signal("grid");
+        let search = signal(String::new());
+        let tags = signal(vec!["Action".to_owned(), "Sci-Fi".to_owned()]);
+        let checked_item = signal(true);
+        let selected_menu = signal("none");
+
+        view()
+            .flex_1()
+            .flex_col()
+            .gap_3()
+            .bg(move || theme().background)
+            .child(
+                view()
+                    .test_id("lang-toggle")
+                    .on_press(move || lang_en.update(|b| *b = !*b)),
+            )
+            .child(sidebar_nav_item_reactive(
+                || true,
+                icons::BOOK,
+                move || if lang_en.get() { "Library" } else { "书库" },
+                || Some(4),
+                || {},
+            ))
+            .child(search_input_reactive(
+                move || search.get(),
+                move || {
+                    if lang_en.get() {
+                        "Search comics...".to_owned()
+                    } else {
+                        "搜索漫画…".to_owned()
+                    }
+                },
+                move || {
+                    if lang_en.get() {
+                        "Search comics"
+                    } else {
+                        "搜索漫画"
+                    }
+                },
+                move |next| search.set(next.to_owned()),
+                move || search.set(String::new()),
+            ))
+            .child(
+                segmented_text_group()
+                    .child(segmented_text_item(
+                        move || view_mode.get() == "grid",
+                        "网格",
+                        move || view_mode.set("grid"),
+                    ))
+                    .child(segmented_text_item(
+                        move || view_mode.get() == "list",
+                        "列表",
+                        move || view_mode.set("list"),
+                    )),
+            )
+            .child(text(move || format!("mode:{}", view_mode.get())))
+            .child(tag_input(
+                move || tags.get(),
+                move || {
+                    if lang_en.get() {
+                        "Add tag...".to_owned()
+                    } else {
+                        "添加标签…".to_owned()
+                    }
+                },
+                move |next| tags.set(next),
+            ))
+            .child(text(move || format!("tags:{}", tags.get().join("|"))))
+            .child(
+                styled_popover()
+                    .trigger(view().test_id("popover-trigger").child(text("Open Popover")))
+                    .child(text("Popover Content")),
+            )
+            .child(
+                styled_menu()
+                    .trigger(view().test_id("menu-trigger").child(text("Open Menu")))
+                    .child(styled_menu_item("重命名", move || selected_menu.set("rename")))
+                    .child(styled_menu_separator())
+                    .child(styled_menu_item_checked(
+                        move || checked_item.get(),
+                        "从右到左",
+                        move || {
+                            checked_item.update(|v| *v = !*v);
+                            selected_menu.set("rtl");
+                        },
+                    )),
+            )
+            .child(
+                styled_context_menu()
+                    .trigger(view().test_id("ctx-trigger").child(text("Context Target")))
+                    .child(styled_menu_item("收藏", || {})),
+            )
+            .child(text(move || format!("menu:{}", selected_menu.get())))
+            .child(svg_icon(icons::STAR_FILLED, 16.0, move || theme().primary))
+            .child(svg_icon(icons::ZOOM_IN, 16.0, move || theme().foreground))
+    }
+
+    core.mount_root(&Root::of::<V130ControlsApp>());
+    let batch = core.commit().unwrap();
+    let initial_texts = texts_of(&batch);
+    for expected in [
+        "书库",
+        "4",
+        "网格",
+        "列表",
+        "mode:grid",
+        "Action",
+        "Sci-Fi",
+        "tags:Action|Sci-Fi",
+        "Open Popover",
+        "Open Menu",
+        "Context Target",
+    ] {
+        assert!(
+            initial_texts.iter().any(|t| t == expected),
+            "expected `{expected}` in initial texts: {initial_texts:?}"
+        );
+    }
+
+    // 1. Toggle language -> reactive nav label and search placeholder/a11y label update
+    let lang_btn = find_test_id(&batch, "lang-toggle");
+    let batch = press_node(&mut core, lang_btn);
+    assert!(texts_of(&batch).iter().any(|t| t == "Library"));
+    assert!(batch.items.iter().any(|item| match item {
+        MountItem::Input { config, .. } => config.placeholder == "Search comics...",
+        _ => false,
+    }));
+    assert!(batch.items.iter().any(|item| match item {
+        MountItem::AccessibilityLabel { label, .. } => label.as_deref() == Some("Search comics"),
+        _ => false,
+    }));
+
+    // 2. Press segmented_text_item ("列表")
+    let mut text_parents = BTreeMap::new();
+    let mut text_ids = BTreeMap::new();
+    let full_batch = {
+        // Re-mount cleanly to capture the full tree hierarchy for button/input targeting.
+        let mut core2 = setup_core(Arc::new(MemoryBackend::default()), desktop_env(None));
+        core2.mount_root(&Root::of::<V130ControlsApp>());
+        let init_batch = core2.commit().unwrap();
+        for item in &init_batch.items {
+            match item {
+                MountItem::Insert { parent, child, .. } => {
+                    text_parents.insert(*child, *parent);
+                }
+                MountItem::Text { id, text, .. } => {
+                    text_ids.insert(text.text.clone(), *id);
+                }
+                _ => {}
+            }
+        }
+        (core2, init_batch)
+    };
+    let (mut core2, init_batch) = full_batch;
+
+    let list_text_id = text_ids["列表"];
+    let list_btn_id = text_parents[&list_text_id];
+    let batch = press_node(&mut core2, list_btn_id);
+    assert!(texts_of(&batch).iter().any(|t| t == "mode:list"));
+
+    // 3. Test tag_input: comma appends unique tag, submit appends tag, duplicate is ignored, close removes chip
+    let tag_input_id = init_batch
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            MountItem::Input { id, .. } => Some(*id),
+            _ => None,
+        })
+        .nth(1)
+        .expect("expected second input (tag_input)");
+
+    core2.input_changed(tag_input_id, " Fantasy , Action , ", 1);
+    assert!(core2.component_event(
+        tag_input_id,
+        EventKind::ChangeText,
+        &EventPayload::Text {
+            text: " Fantasy , Action , ".into(),
+            count: 1,
+        },
+    ));
+    let batch = core2.commit().unwrap();
+    assert!(
+        texts_of(&batch).iter().any(|t| t == "tags:Action|Sci-Fi|Fantasy"),
+        "expected Fantasy added and duplicate Action skipped, got {:?}",
+        texts_of(&batch)
+    );
+
+    assert!(core2.component_event(
+        tag_input_id,
+        EventKind::SubmitEditing,
+        &EventPayload::Text {
+            text: "  Mystery  ".into(),
+            count: 2,
+        },
+    ));
+    let batch = core2.commit().unwrap();
+    assert!(
+        texts_of(&batch)
+            .iter()
+            .any(|t| t == "tags:Action|Sci-Fi|Fantasy|Mystery"),
+        "expected Mystery added on submit, got {:?}",
+        texts_of(&batch)
+    );
+
+    // Find remove button for "Sci-Fi" chip
+    let remove_scifi_btn = init_batch
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MountItem::ViewProps { id, props }
+                if props.accessibility.label.as_deref() == Some("移除标签 Sci-Fi") =>
+            {
+                Some(*id)
+            }
+            _ => None,
+        })
+        .expect("expected remove chip button for Sci-Fi");
+    let batch = press_node(&mut core2, remove_scifi_btn);
+    assert!(
+        texts_of(&batch)
+            .iter()
+            .any(|t| t == "tags:Action|Fantasy|Mystery"),
+        "expected Sci-Fi removed, got {:?}",
+        texts_of(&batch)
+    );
+
+    // 4. Open styled_popover and styled_menu
+    let popover_trigger = find_test_id(&init_batch, "popover-trigger");
+    let batch = press_node(&mut core2, popover_trigger);
+    assert!(
+        texts_of(&batch).iter().any(|t| t == "Popover Content"),
+        "expected popover content when opened, got {:?}",
+        texts_of(&batch)
+    );
+
+    let menu_trigger = find_test_id(&init_batch, "menu-trigger");
+    let batch = press_node(&mut core2, menu_trigger);
+    let menu_texts = texts_of(&batch);
+    assert!(menu_texts.iter().any(|t| t == "重命名"));
+    assert!(menu_texts.iter().any(|t| t == "从右到左"));
+
+    let rtl_item_id = batch
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MountItem::ViewProps { id, props }
+                if props.accessibility.role == AccessibilityRole::MenuItemCheckbox =>
+            {
+                Some(*id)
+            }
+            _ => None,
+        })
+        .expect("expected checkable menu item");
+    let batch = press_node(&mut core2, rtl_item_id);
+    assert!(texts_of(&batch).iter().any(|t| t == "menu:rtl"));
 }

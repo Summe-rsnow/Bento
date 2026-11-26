@@ -1,5 +1,7 @@
 //! Text fields, search inputs, textareas, switches, radio choices, and checkboxes.
 
+use std::rc::Rc;
+
 use nsh_base::{button, input, switch, theme, Input};
 use nsh_core::element::StyleRefinement;
 use nsh_core::prelude::*;
@@ -59,7 +61,19 @@ pub fn search_input(
     on_change: impl Fn(&str) + 'static,
     on_clear: impl Fn() + 'static,
 ) -> View {
-    let on_clear = std::rc::Rc::new(on_clear);
+    search_input_reactive(value, placeholder, accessibility_label, on_change, on_clear)
+}
+
+/// A search field accepting reactive `placeholder` and `accessibility_label` values
+/// (e.g. for bilingual apps).
+pub fn search_input_reactive(
+    value: impl Fn() -> String + Copy + 'static,
+    placeholder: impl IntoReactive<String>,
+    accessibility_label: impl IntoReactive<SharedString>,
+    on_change: impl Fn(&str) + 'static,
+    on_clear: impl Fn() + 'static,
+) -> View {
+    let on_clear = Rc::new(on_clear);
     view()
         .h_8()
         .pl(px(10.0))
@@ -88,9 +102,127 @@ pub fn search_input(
                 .text_color(move || theme().foreground),
         )
         .child(when(move || !value().is_empty(), move || {
-            let on_clear = std::rc::Rc::clone(&on_clear);
+            let on_clear = Rc::clone(&on_clear);
             icon_action(IconKind::Subtle, icons::CLOSE, "清空搜索", move || on_clear())
         }))
+}
+
+fn append_unique_tags(mut current: Vec<String>, raw: &str) -> Option<Vec<String>> {
+    let mut changed = false;
+    for part in raw.split(',') {
+        let trimmed = part.trim();
+        if !trimmed.is_empty() && !current.iter().any(|t| t == trimmed) {
+            current.push(trimmed.to_owned());
+            changed = true;
+        }
+    }
+    changed.then_some(current)
+}
+
+/// A tag chip editor showing removable chips and an inline input that appends
+/// trimmed, non-empty, unique tags when submitting or typing a comma.
+pub fn tag_input(
+    tags: impl Fn() -> Vec<String> + 'static,
+    placeholder: impl IntoReactive<String>,
+    on_change: impl Fn(Vec<String>) + 'static,
+) -> impl IntoElement {
+    let tags: Rc<dyn Fn() -> Vec<String>> = Rc::new(tags);
+    let on_change: Rc<dyn Fn(Vec<String>)> = Rc::new(on_change);
+    let draft = signal(String::new());
+
+    let tags_each = Rc::clone(&tags);
+    let tags_remove = Rc::clone(&tags);
+    let on_change_remove = Rc::clone(&on_change);
+    let tags_input = Rc::clone(&tags);
+    let on_change_input = Rc::clone(&on_change);
+
+    view()
+        .min_h(px(34.0))
+        .px_2()
+        .py_1()
+        .flex_row()
+        .flex_wrap()
+        .items_center()
+        .gap_1p5()
+        .rounded(radius)
+        .border_1()
+        .border_color(move || theme().input)
+        .bg(move || theme().background)
+        .focus_within(|s: StyleRefinement| s.border_color(move || theme().ring))
+        .child(each(
+            move || tags_each(),
+            |tag| tag.clone(),
+            move |tag, _| {
+                let tags_remove = Rc::clone(&tags_remove);
+                let on_change_remove = Rc::clone(&on_change_remove);
+                view()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .h(px(22.0))
+                    .pl_2()
+                    .pr_1()
+                    .rounded_full()
+                    .border_1()
+                    .border_color(move || theme().border)
+                    .bg(move || theme().secondary)
+                    .child(
+                        text(move || tag.get())
+                            .text_xs()
+                            .text_color(move || theme().secondary_foreground),
+                    )
+                    .child(
+                        button()
+                            .on_press(move || {
+                                let target = tag.get_untracked();
+                                let mut next = tags_remove();
+                                next.retain(|t| t != &target);
+                                on_change_remove(next);
+                            })
+                            .accessibility_label(move || {
+                                SharedString::from(format!("移除标签 {}", tag.get()))
+                            })
+                            .w(px(16.0))
+                            .h(px(16.0))
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .hover(|s| s.bg(move || theme().accent))
+                            .active(|s| s.scale(0.92))
+                            .transition_transform()
+                            .duration(MOTION_FAST_MS)
+                            .focus_visible(focus_ring)
+                            .child(svg_icon(icons::CLOSE, 10.0, move || theme().muted_foreground)),
+                    )
+            },
+        ))
+        .child(
+            input()
+                .value(move || draft.get())
+                .placeholder(placeholder)
+                .submit_behavior(SubmitBehavior::Submit)
+                .flex_1()
+                .min_w(px(100.0))
+                .h(px(24.0))
+                .text_xs()
+                .text_color(move || theme().foreground)
+                .on_change(move |raw: &str| {
+                    if let Some((prefix, rest)) = raw.rsplit_once(',') {
+                        if let Some(next) = append_unique_tags(tags_input(), prefix) {
+                            on_change_input(next);
+                        }
+                        draft.set(rest.trim_start().to_owned());
+                    } else {
+                        draft.set(raw.to_owned());
+                    }
+                })
+                .on_submit(move |raw: &str| {
+                    if let Some(next) = append_unique_tags(tags(), raw) {
+                        on_change(next);
+                    }
+                    draft.set(String::new());
+                }),
+        )
 }
 
 /// A selection checkbox with optional adjacent label and generous hit area.

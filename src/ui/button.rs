@@ -379,6 +379,62 @@ pub fn segmented_icon(
         )
 }
 
+/// Pill container for text-based segmented controls, matching `theme_mode_segmented`.
+pub fn segmented_text_group() -> View {
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(2.0))
+        .p(px(2.0))
+        .rounded(radius)
+        .border_1()
+        .border_color(move || theme().border)
+        .bg(move || theme().muted)
+}
+
+/// One segment of a compact text-based segmented control inside [`segmented_text_group`].
+pub fn segmented_text_item(
+    active: impl Fn() -> bool + Copy + 'static,
+    label: impl IntoReactive<SharedString>,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    base_button()
+        .on_press(on_press)
+        .selected(active)
+        .h(px(24.0))
+        .px(px(10.0))
+        .flex_shrink_0()
+        .items_center()
+        .justify_center()
+        .rounded(px(6.0))
+        .style_when(active, |s| s.bg(move || theme().accent))
+        .hover(move |s| {
+            s.bg(move || {
+                if active() {
+                    theme().accent
+                } else {
+                    theme().secondary
+                }
+            })
+        })
+        .active(|s| s.scale(0.97))
+        .transition_transform()
+        .duration(MOTION_FAST_MS)
+        .focus_visible(focus_ring)
+        .child(
+            text(label)
+                .text_xs()
+                .style_with(move |s| {
+                    if active() {
+                        s.font_weight(FontWeight::MEDIUM)
+                            .text_color(move || theme().accent_foreground)
+                    } else {
+                        s.text_color(move || theme().muted_foreground)
+                    }
+                }),
+        )
+}
+
 /// An external hyperlink styled with the primary accent and focus ring.
 pub fn external_link<M>(
     label: impl IntoReactive<SharedString>,

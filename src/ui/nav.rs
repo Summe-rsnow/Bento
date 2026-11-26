@@ -14,10 +14,23 @@ pub fn sidebar_nav_item(
     badge_count: impl Fn() -> Option<usize> + Copy + 'static,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
+    sidebar_nav_item_reactive(selected, icon_markup, label, badge_count, on_press)
+}
+
+/// A desktop sidebar navigation item accepting a reactive `label` (e.g. for live locale changes).
+pub fn sidebar_nav_item_reactive(
+    selected: impl Fn() -> bool + Copy + 'static,
+    icon_markup: &'static str,
+    label: impl IntoReactive<SharedString>,
+    badge_count: impl Fn() -> Option<usize> + Copy + 'static,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    let label = label.into_reactive();
+    let a11y_label = label.clone().map(Some);
     button()
         .on_press(on_press)
         .selected(selected)
-        .accessibility_label(label)
+        .accessibility_label(a11y_label)
         .w_full()
         .h(px(34.0))
         .px(px(10.0))

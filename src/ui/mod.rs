@@ -6,6 +6,7 @@ pub mod button;
 pub mod hotkey;
 pub mod icons;
 pub mod input;
+pub mod menu;
 pub mod nav;
 pub mod progress;
 pub mod surface;
@@ -13,12 +14,20 @@ pub mod surface;
 pub use button::{
     action, action_busy, action_disabled, action_sm, action_sm_disabled, action_with_icon, button,
     external_link, external_link_button, hint_tooltip, icon_action, icon_action_disabled,
-    icon_action_spinning_with_tip, icon_action_with_tip, segmented_icon, ButtonKind, IconKind,
+    icon_action_spinning_with_tip, icon_action_with_tip, segmented_icon, segmented_text_group,
+    segmented_text_item, ButtonKind, IconKind,
 };
 pub use hotkey::{hotkey_badge, hotkey_editor, hotkey_editor_with_presets, DEFAULT_HOTKEY_PRESETS};
 pub use icons::{bento_brand_mark, brand_mark_svg, png_data_uri, svg_icon};
-pub use input::{checkbox, radio_option, search_input, text_field, textarea, toggle_switch};
-pub use nav::{filter_chip, sidebar_nav_item};
+pub use input::{
+    checkbox, radio_option, search_input, search_input_reactive, tag_input, text_field, textarea,
+    toggle_switch,
+};
+pub use menu::{
+    styled_context_menu, styled_menu, styled_menu_item, styled_menu_item_checked,
+    styled_menu_separator, styled_popover,
+};
+pub use nav::{filter_chip, sidebar_nav_item, sidebar_nav_item_reactive};
 pub use progress::progress_bar;
 pub use surface::{
     card, confirm_dialog, divider, empty_state, meta_row, modal_dialog, notice_toast,
