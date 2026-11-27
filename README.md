@@ -6,11 +6,11 @@
 
 **专为 NSH 桌面工具家族打造的原生 UI 组件库、统一图标与桌面壳基础设施**
 
-为 **Wonton**、**Sundae**、**Ramen** 等原生桌面工具提供 100% 语义化的主题组件层、统一 24×24 矢量图标库、隐藏标题栏与系统托盘桌面壳、窗口尺寸与位置记忆、全局快捷键控制器、格式化工具、合成器驱动的拖拽排序控制器以及 GitHub Releases 更新检测能力。  
+为 **Wonton**、**Sundae**、**Ramen**、**Mango** 等原生桌面工具提供 100% 语义化的主题组件层、统一 24×24 矢量图标库、隐藏标题栏与系统托盘桌面壳、窗口尺寸与位置记忆、全局快捷键控制器、格式化工具、合成器驱动的拖拽排序控制器以及 GitHub Releases 更新检测能力。  
 基于 **Rust + [NSH](https://github.com/longbridge/nsh)** 构建，纯原生渲染，无 JavaScript 运行时开销。
 
 <p>
-  <a href="https://github.com/Summe-rsnow/Bento/releases"><img src="https://img.shields.io/badge/Version-v1.2.0-10b981?style=flat-square" alt="Version v1.2.0" /></a>
+  <a href="https://github.com/Summe-rsnow/Bento/releases"><img src="https://img.shields.io/badge/Version-v1.3.1-10b981?style=flat-square" alt="Version v1.3.1" /></a>
   <img src="https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust" alt="Rust 2024" />
   <img src="https://img.shields.io/badge/Platform-Windows-0ea5e9?style=flat-square" alt="Platform Windows" />
   <img src="https://img.shields.io/badge/UI-NSH%20Native-6366f1?style=flat-square" alt="UI NSH Native" />
@@ -34,10 +34,11 @@
 
 | 工具 | 当前版本 | 仓库地址 | 定位与职责 |
 |---|---|---|---|
-| **Bento** | `v1.2.0` | [Summe-rsnow/Bento](https://github.com/Summe-rsnow/Bento) | 共享原生 UI 组件库、统一 24×24 图标库与桌面壳基础设施 |
+| **Bento** | `v1.3.1` | [Summe-rsnow/Bento](https://github.com/Summe-rsnow/Bento) | 共享原生 UI 组件库、统一 24×24 图标库与桌面壳基础设施 |
 | **Wonton** | `v1.4.0` | [Summe-rsnow/Wonton](https://github.com/Summe-rsnow/Wonton) | 专为 Antigravity 打造的进程级独立代理与多账号额度管理工具 |
 | **Sundae** | `v1.2.0` | [Summe-rsnow/Sundae](https://github.com/Summe-rsnow/Sundae) | 专为 Windows Scoop 打造的轻快原生桌面软件包管理器 |
 | **Ramen** | `v1.2.0` | [Summe-rsnow/Ramen](https://github.com/Summe-rsnow/Ramen) | 专为 Windows 打造的极速桌面文件搜索与即时索引检索工具 |
+| **Mango** | `v1.0.0` | [Summe-rsnow/Mango](https://github.com/Summe-rsnow/Mango) | 轻量高性能原生本地漫画阅读器 |
 
 ---
 
@@ -45,15 +46,15 @@
 
 - **🧩 `ui` — 语义化原生组件层**
   - 完全基于 `nsh_base` 与 `theme()` 构建，零硬编码色值，天然适配浅色 / 深色双主题与键盘 `focus_visible` 焦点环（`focus_ring`）。
-  - 覆盖按钮与工具栏操作（`button`、`action`、`action_busy`、`action_disabled`、`action_sm`、`action_with_icon`、`icon_action`、`icon_action_with_tip`、`icon_action_spinning_with_tip`、`segmented_icon`、`hint_tooltip`、`external_link`、`external_link_button`、`ButtonKind`、`IconKind`）、表单输入（`text_field`、`textarea`、`search_input`、`checkbox`、`toggle_switch`、`radio_option`）、快捷键控件（`hotkey_badge`、`hotkey_editor`、`hotkey_editor_with_presets`、`DEFAULT_HOTKEY_PRESETS`）、导航控件（`sidebar_nav_item`、`filter_chip`）、进度条（`progress_bar`）以及表面与弹窗容器（`card`、`divider`、`toolbar_separator`、`section_header`、`empty_state`、`status_badge`、`notice_toast`、`modal_dialog`、`progress_modal_dialog`、`meta_row`、`confirm_dialog`）。
+  - 覆盖按钮与工具栏操作（`button`、`action`、`action_busy`、`action_disabled`、`action_sm`、`action_with_icon`、`icon_action`、`icon_action_with_tip`、`icon_action_spinning_with_tip`、`segmented_icon`、`segmented_text_group`、`segmented_text_item`、`hint_tooltip`、`external_link`、`external_link_button`、`ButtonKind`、`IconKind`）、表单输入（`text_field`、`textarea`、`search_input`、`search_input_reactive`、`tag_input`、`checkbox`、`toggle_switch`、`radio_option`）、快捷键控件（`hotkey_badge`、`hotkey_editor`、`hotkey_editor_with_presets`、`DEFAULT_HOTKEY_PRESETS`）、导航与菜单控件（`sidebar_nav_item`、`sidebar_nav_item_reactive`、`filter_chip`、`styled_menu`、`styled_menu_item`、`styled_menu_item_checked`、`styled_menu_separator`、`styled_context_menu`、`styled_popover`）、进度条（`progress_bar`）以及表面与弹窗容器（`card`、`divider`、`toolbar_separator`、`section_header`、`empty_state`、`status_badge`、`notice_toast`、`modal_dialog`、`progress_modal_dialog`、`meta_row`、`confirm_dialog`）。
   - 内置 `ValueTone` 语义色调映射、`mono_font()` 等宽字体读取、统一圆角 `radius()` 以及 `MOTION_INSTANT_MS` / `MOTION_FAST_MS` / `MOTION_BASE_MS` / `MOTION_SLOW_MS` 动效时长常量，`hint_tooltip` 支持淡入/缩放动效并自动遵循 `reduce_motion`。
 
 - **🎯 `ui::icons` — 统一家族 24×24 矢量图标与品牌标**
-  - 集中维护 58 个统一风格的 24×24 `currentColor` 矢量图标常量（涵盖通用操作、导航、文件与媒体类型、磁盘与筛选、快捷键、代理网络、Scoop 仓库源、客户端启动等场景，包含 `FILE`、`IMAGE`、`VIDEO`、`MUSIC`、`ARCHIVE`、`CODE`、`KEYBOARD`、`FOLDER_OPEN`、`ARROW_UP`、`ARROW_DOWN`、`HARD_DRIVE`、`POWER`、`FILTER`、`EYE` 等），并通过 `svg_icon` 动态绑定语义主题色。
+  - 集中维护 76 个统一风格的 24×24 `currentColor` 矢量图标常量与 `BENTO_BRAND_MARK` 品牌标（涵盖通用操作、导航、阅读与缩放、文件与媒体类型、磁盘与筛选、快捷键、代理网络、Scoop 仓库源、客户端启动等场景，包含 `FILE`、`IMAGE`、`VIDEO`、`MUSIC`、`ARCHIVE`、`CODE`、`BOOK`、`COLUMNS`、`STAR`、`ZOOM_IN`、`ZOOM_OUT`、`KEYBOARD`、`FOLDER_OPEN`、`ARROW_UP`、`ARROW_DOWN`、`HARD_DRIVE`、`POWER`、`FILTER`、`EYE` 等），并通过 `svg_icon` 动态绑定语义主题色。
   - 提供 `brand_mark_svg` 与 `bento_brand_mark`，保留应用 `assets/logo-mark.svg` 原生多色渐变而不覆盖内部色彩；同时提供 `png_data_uri` 将嵌入式 PNG 编码为系统托盘图标可用的 `ImageSrc`。
 
 - **🪟 `shell` — 桌面壳、窗口记忆、托盘与系统集成**
-  - **Window Model v2 与隐藏标题栏框架**：`desktop_window`、`init_desktop_window`、`restore_and_focus_window`、`bind_reopen_handler`、`set_window_progress` / `clear_window_progress`、`title_bar_shell`、`title_bar_right_with_theme`、`title_bar_brand`、`title_bar_brand_clickable` 与带未读更新圆点的 `about_icon_button`，适配 NSH 0.7.1 Window Model v2 与 `singleInstance` 唤起恢复、自动预留原生窗口按钮安全边距、支持窗口拖拽与任务栏进度并保证主题切换器始终靠右。
+  - **Window Model v2 与隐藏标题栏框架**：`desktop_window`、`init_desktop_window`、`restore_and_focus_window`、`is_window_fullscreen` / `set_window_fullscreen` / `toggle_window_fullscreen`、`bind_reopen_handler`、`set_window_progress` / `clear_window_progress`、`title_bar_shell`、`title_bar_right_with_theme`、`title_bar_brand`、`title_bar_brand_clickable` 与带未读更新圆点的 `about_icon_button`，适配 NSH 0.7.1 Window Model v2 与 `singleInstance` 唤起恢复、自动预留原生窗口按钮安全边距、支持窗口拖拽与任务栏进度并保证主题切换器始终靠右。
   - **窗口尺寸与位置记忆**：`remember_window_placement` / `remember_window_placement_with_key`（配合 `DEFAULT_WINDOW_PLACEMENT_KEY`、`save_window_placement`、`is_valid_window_placement`）在启动时恢复合法窗口位置与大小，使用 250ms 防抖自动持久化，并在最小化到托盘或 `on_app_quit` 退出时同步落盘。
   - **外观与关闭行为**：`theme_mode_segmented` 配合 `ThemeMode`（`from_key` / `as_key` / `apply` / `label`）实现「跟随系统 / 浅色 / 深色」三段切换；`bind_close_handler`、`close_behavior_submenu`、`confirm_close_dialog` 配合 `CloseBehavior`（`Ask` / `Tray` / `Exit`）统一处理关闭最小化到托盘或直接退出。
   - **悬浮反馈与本地打开**：`NoticeCenter`（配合 `NoticeTone`，普通提示 3 秒自动消失、错误提示 6 秒）提供不占布局空间的底部悬浮通知；`open_directory`、`open_local_file` 与 `reveal_in_file_manager` 跨平台调用系统文件管理器定位高亮文件或打开本地目录/文件（绕过 NSH `open_url` 对 Windows 盘符路径的限制）。
@@ -107,17 +108,25 @@ pub fn tray_icon_src() -> ImageSrc {
 }
 ```
 
+### 家族 Logo 视觉规范
+
+所有 NSH 家族项目遵循统一的品牌图标标准（详见根目录 [`PROJECT_GUIDE.md`](file:///c:/my/AI/nsh/PROJECT_GUIDE.md)）：
+
+- **真实立体食物主体**：Logo 必须描绘对应食物的**真实立体造型**（例如 Bento 便当盒中的米饭、梅干、玉子烧、烤三文鱼、生菜、西兰花与樱桃番茄），禁止抽象色块、星形闪光或无关装饰拼接。
+- **双资产输出**：`assets/logo.svg`（`1024×1024` 深海曜石圆角方砖底座 `rx="212"`）→ 栅格化 `assets/icon.png`；`assets/logo-mark.svg`（去除底座与光晕，居中裁切 `24×24`）→ 下游应用同步输出 `64×64` `assets/tray-icon.png`。
+- **造型技法**：统一采用多段立体渐变、`clip-path` 内嵌环境遮蔽与高光边缘掠光，不使用粗黑卡通描边，每次重绘均须栅格化目检 PNG 成品。
+
 ---
 
 ## 🚀 快速开始
 
 ### 在家族应用中引入 Bento
 
-在应用的 `Cargo.toml` 中通过 Git Tag 引入稳定版本 `v1.2.0`：
+在应用的 `Cargo.toml` 中通过 Git Tag 引入稳定版本 `v1.3.1`：
 
 ```toml
 [dependencies]
-bento = { git = "https://github.com/Summe-rsnow/Bento.git", tag = "v1.2.0" }
+bento = { git = "https://github.com/Summe-rsnow/Bento.git", tag = "v1.3.1" }
 ```
 
 在同级目录同步开发与联调 `Bento` 时，可通过 `[patch]` 临时指向本地工作区：
@@ -145,7 +154,7 @@ cargo test
 ```text
 Bento/
 ├── assets/                 # 品牌 Logo 与向量标志（logo.svg / logo-mark.svg / icon.png）
-├── Cargo.toml              # Crate 元信息与依赖配置（v1.2.0，Rust 2024）
+├── Cargo.toml              # Crate 元信息与依赖配置（v1.3.1，Rust 2024）
 ├── LICENSE                 # Apache License 2.0 开源协议
 ├── README.md               # 项目说明文档
 ├── theme.json              # 家族统一浅色 / 深色语义色 Token（DEFAULT_THEME_JSON）
@@ -155,15 +164,16 @@ Bento/
     ├── drag_list.rs        # 垂直卡片列表拖拽排序控制器与槽位几何计算
     ├── format.rs           # 文件大小、千分位计数与 Windows FILETIME 格式化
     ├── hotkey.rs           # 全局快捷键校验、异步注册绑定与主窗口显隐切换
-    ├── shell.rs            # 隐藏标题栏、窗口位置记忆、外观切换、关闭策略、托盘子菜单、NoticeCenter 与文件管理器定位
+    ├── shell.rs            # 隐藏标题栏、窗口位置记忆、外观切换、关闭策略、托盘子菜单、全屏辅助、NoticeCenter 与文件管理器定位
     ├── updater.rs          # AppMeta、GitHub Releases SemVer 更新检测与共用关于弹窗
     └── ui/
         ├── mod.rs          # UI 层统一导出、ValueTone、focus_ring、mono_font 与动效常量
-        ├── button.rs       # 按钮、图标按钮、分段图标控件、提示气泡与外链
+        ├── button.rs       # 按钮、图标按钮、分段文本/图标控件、提示气泡与外链
         ├── hotkey.rs       # 全局快捷键徽标（hotkey_badge）与设置编辑器（hotkey_editor）
         ├── icons.rs        # 统一家族 24×24 描边图标库、brand_mark_svg 与 png_data_uri
-        ├── input.rs        # 文本输入框、多行文本框、搜索框、复选框、开关与单选框
-        ├── nav.rs          # 侧边栏导航项（带数量徽标）与过滤芯片
+        ├── input.rs        # 文本输入框、多行文本框、搜索框、标签输入、复选框、开关与单选框
+        ├── menu.rs         # 原生风格弹窗菜单、右键菜单与悬浮气泡容器
+        ├── nav.rs          # 侧边栏导航项（含响应式与数量徽标）与过滤芯片
         ├── progress.rs     # 线性进度条
         └── surface.rs      # 卡片、分隔线、状态徽标、悬浮提示、模态弹窗、meta_row 与 confirm_dialog
 ```
